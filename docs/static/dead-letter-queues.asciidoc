@@ -99,7 +99,7 @@ Logstash instances.
 
 By default, the maximum size of each dead letter queue is set to 1024mb. To
 change this setting, use the `dead_letter_queue.max_bytes` option.
-Dead letter queues do not have file rotation. DLQs accumulate entries until reaching the maximum size.
+Dead letter queues do not have file rotation in runtime. DLQs accumulate entries until reaching the maximum size.
 Entries will be dropped if they would exceed the size.
 
 Old files in the dead letter queues do not get deleted automatically.
