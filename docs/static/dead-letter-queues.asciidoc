@@ -95,16 +95,14 @@ dead_letter_queue.flush_interval: 5000
 NOTE: You may not use the same `dead_letter_queue` path for two different
 Logstash instances.
 
-===== File rotation
-
-Dead letter queues have a built-in file rotation policy that manages the file
-size of the queue. When the file size reaches a preconfigured threshold, a new
-file is created automatically.
+===== File management
 
 By default, the maximum size of each dead letter queue is set to 1024mb. To
-change this setting, use the `dead_letter_queue.max_bytes` option.  Entries
-will be dropped if they would increase the size of the dead letter queue beyond
-this setting. 
+change this setting, use the `dead_letter_queue.max_bytes` option.
+Dead letter queues do not have file rotation. DLQs accumulate entries until reaching the maximum size.
+Entries will be dropped if they would exceed the size.
+
+Old files in the dead letter queues do not get deleted automatically.
 
 [[processing-dlq-events]]
 ==== Processing events in the dead letter queue
