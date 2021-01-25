@@ -44,6 +44,9 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
 import java.util.stream.Stream;
 
+/**
+ * JRuby extension used as parent for Ruby's JavaPipelines
+ * */
 @JRubyClass(name = "JavaBasePipeline")
 public final class JavaBasePipelineExt extends AbstractPipelineExt {
 
@@ -77,8 +80,7 @@ public final class JavaBasePipelineExt extends AbstractPipelineExt {
                 new ExecutionContextFactoryExt(
                     context.runtime, RubyUtil.EXECUTION_CONTEXT_FACTORY_CLASS
                 ).initialize(context, args[3], this, dlqWriter(context)),
-                RubyUtil.FILTER_DELEGATOR_CLASS,
-                Engine.JAVA
+                RubyUtil.FILTER_DELEGATOR_CLASS
             ),
             getSecretStore(context)
         );

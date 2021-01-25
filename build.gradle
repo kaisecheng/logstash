@@ -59,7 +59,13 @@ allprojects {
   }
 
   tasks.withType(Javadoc).configureEach {
-      options.addStringOption("Xwerror", "-quiet")
+      if (JavaVersion.current().compareTo(JavaVersion.VERSION_14) > 0) {
+          // with JDK 15 the -Xwerror undocumented feature becomes official with switch -Werror
+          options.addBooleanOption("Werror", true)
+      } else {
+          options.addBooleanOption("Xwerror", true)
+      }
+      options.addBooleanOption("Xdoclint:all,-missing", true)
       if (JavaVersion.current().compareTo(JavaVersion.VERSION_1_9) > 0) {
           options.addBooleanOption("html5", true)
       }
@@ -532,6 +538,23 @@ def selectOsType() {
     }
 }
 
+def selectArch() {
+    if (project.ext.has("jdk_arch")) {
+        return project.ext.jdk_arch
+    }
+    String cpu_arch = System.properties["os.arch"]
+    switch (cpu_arch) {
+        case "amd64":
+        case "x86_64":
+            return "x86_64"
+        case "aarch64":
+        case "arm64":
+            return "arm64"
+        default:
+            throw new IllegalArgumentException("Can't handle os.arch of type $cpu_arch")
+    }
+}
+
 class JDKDetails {
     final String revision
     final String build
@@ -602,7 +625,7 @@ tasks.register("downloadJdk", Download) {
     String osName = selectOsType()
 
     def versionYml = new Yaml().load(new File("$projectDir/versions.yml").text)
-    String jdkArch = project.ext.jdk_arch
+    String jdkArch = selectArch()
     def jdkDetails = new JDKDetails(versionYml, osName, jdkArch)
 
     description "Download JDK ${jdkDetails.major}, OS: ${osName}"

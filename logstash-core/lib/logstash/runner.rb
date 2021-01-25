@@ -124,11 +124,6 @@ class LogStash::Runner < Clamp::StrictCommand
     :attribute_name => "pipeline.ordered",
     :default => LogStash::SETTINGS.get_default("pipeline.ordered")
 
-  option ["--java-execution"], :flag,
-         I18n.t("logstash.runner.flag.java-execution"),
-         :attribute_name => "pipeline.java_execution",
-         :default => LogStash::SETTINGS.get_default("pipeline.java_execution")
-
   option ["--plugin-classloaders"], :flag,
          I18n.t("logstash.runner.flag.plugin-classloaders"),
          :attribute_name => "pipeline.plugin_classloaders",
@@ -291,6 +286,11 @@ class LogStash::Runner < Clamp::StrictCommand
     # override log level that may have been introduced from a custom log4j config file
     LogStash::Logging::Logger::configure_logging(setting("log.level"))
 
+    if log_configuration_contains_javascript_usage?
+      logger.error("Logging configuration uses Script log appender or filter with Javascript, which is no longer supported.")
+      return 1
+    end
+
     if setting("config.debug") && !logger.debug?
       logger.warn("--config.debug was specified, but log.level was not set to \'debug\'! No config info will be logged.")
     end
@@ -364,10 +364,7 @@ class LogStash::Runner < Clamp::StrictCommand
 
         # TODO(ph): make it better for multiple pipeline
         if results.success?
-          results.response.each do |pipeline_config|
-            pipeline_class = pipeline_config.settings.get_value("pipeline.java_execution") ? LogStash::JavaPipeline : LogStash::BasePipeline
-            pipeline_class.new(pipeline_config)
-          end
+          results.response.each { |pipeline_config| LogStash::JavaPipeline.new(pipeline_config) }
           puts "Configuration OK"
           logger.info "Using config.test_and_exit mode. Config Validation Result: OK. Exiting Logstash"
         else
@@ -431,6 +428,18 @@ class LogStash::Runner < Clamp::StrictCommand
     FileLockFactory.releaseLock(@data_path_lock) if @data_path_lock
     @log_fd.close if @log_fd
   end # def self.main
+
+  def log_configuration_contains_javascript_usage?
+     context = LoggerContext.getContext(false)
+     config = context.configuration
+     config_file = config.configuration_source.file
+     # no config file so nothing to check
+     return false if config_file.nil?
+
+     logger.info("Log4j configuration path used is: #{config_file.path}")
+     log_config = File.open(config_file.absolute_path).read
+     (log_config =~ /^[^#]+script\.language\s*=\s*JavaScript/) != nil
+  end
 
   def show_version
     show_version_logstash
