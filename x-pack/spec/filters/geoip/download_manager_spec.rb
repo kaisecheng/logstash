@@ -25,7 +25,6 @@ describe LogStash::Filters::Geoip do
       allow(LogStash::SETTINGS).to receive(:get).with("xpack.geoip.download.endpoint").and_return(GEOIP_STAGING_ENDPOINT)
     end
 
-    # this is disabled until https://github.com/elastic/logstash/issues/13261 is solved
     context "rest client" do
 
       it "can call endpoint" do
