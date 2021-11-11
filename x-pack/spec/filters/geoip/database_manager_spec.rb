@@ -211,6 +211,7 @@ describe LogStash::Filters::Geoip do
         c = metric_collector(db_manager)
         expect_download_metric_fail(c)
         expect(c.get([:download_stats], :last_error_msg, :gauge).value).to eql('boom')
+        expect(c.get([:download_stats], :last_failed_at, :gauge).value).not_to be_nil
       end
 
       def expect_download_metric_success(c)
@@ -261,6 +262,7 @@ describe LogStash::Filters::Geoip do
           c = metric_collector(db_manager)
           expect_database_metric(c, LogStash::Filters::Geoip::DatabaseMetric::DATABASE_EXPIRED, second_dirname_in_ymd, 33)
           expect(c.get([:download_stats], :last_error_msg, :gauge).value).to match /GeoIP plugin needs to stop using MaxMind database in order to be compliant/
+          expect(c.get([:download_stats], :last_failed_at, :gauge).value).not_to be_nil
         end
       end
 
