@@ -11,8 +11,9 @@ describe LogStash::Filters::Geoip do
 
   describe 'DownloadManager', :aggregate_failures do
     let(:mock_metadata)  { double("database_metadata") }
+    let(:database_metric) { double("database_metric") }
     let(:download_manager) do
-      manager = LogStash::Filters::Geoip::DownloadManager.new(mock_metadata)
+      manager = LogStash::Filters::Geoip::DownloadManager.new(mock_metadata, database_metric)
       manager
     end
     let(:database_type) { LogStash::Filters::Geoip::CITY }
@@ -174,6 +175,7 @@ describe LogStash::Filters::Geoip do
         expect(download_manager).to receive(:check_update).and_return([[LogStash::Filters::Geoip::ASN, {}],
                                                                        [LogStash::Filters::Geoip::CITY, {}]])
         expect(download_manager).to receive(:download_database).and_raise('boom').at_least(:twice)
+        expect(database_metric).to receive(:set_download_error).with('boom').twice
 
         updated_db = download_manager.send(:fetch_database)
 

@@ -59,7 +59,7 @@ module LogStash module Filters module Geoip class DatabaseManager
                                               asn_database_path,
                                               cc_asn_database_path) }
 
-    @download_manager = DownloadManager.new(@metadata)
+    @download_manager = DownloadManager.new(@metadata, database_metric)
 
     database_metric.initialize_metrics(@metadata.get_all, @states)
   end
@@ -127,6 +127,7 @@ module LogStash module Filters module Geoip class DatabaseManager
       end
     rescue => e
       logger.error(e.message, error_details(e, logger))
+      database_metric.set_download_error(e.message)
     ensure
       check_age
       clean_up_database
@@ -160,14 +161,16 @@ module LogStash module Filters module Geoip class DatabaseManager
 
         notify_plugins(database_type, :expire) do |db_type, ids|
           unless was_expired
-            logger.error("The MaxMind database hasn't been updated from last 30 days. Logstash is unable to get newer version from internet. "\
+            error_msg = "The MaxMind database hasn't been updated from last 30 days. Logstash is unable to get newer version from internet. "\
               "According to EULA, GeoIP plugin needs to stop using MaxMind database in order to be compliant. "\
               "Please check the network settings and allow Logstash accesses the internet to download the latest database, "\
               "or switch to offline mode (:database => PATH_TO_YOUR_DATABASE) to use a self-managed database "\
-              "which you can download from https://dev.maxmind.com/geoip/geoip2/geolite2/ ")
+              "which you can download from https://dev.maxmind.com/geoip/geoip2/geolite2/ "
 
+            logger.error(error_msg)
             logger.warn("geoip plugin will stop filtering and will tag all events with the '_geoip_expired_database' tag.",
                         :database_type => db_type, :pipeline_ids => ids)
+            database_metric.set_download_error(error_msg)
           end
         end
 

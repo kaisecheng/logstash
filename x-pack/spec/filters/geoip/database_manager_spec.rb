@@ -51,7 +51,7 @@ describe LogStash::Filters::Geoip do
 
         c = metric_collector(db_manager)
         [ASN, CITY].each do |type|
-          expect(c.get([:database, type.to_sym], :status, :gauge).value).to eql(LogStash::Filters::Geoip::DatabaseMetric::DATABASE_INIT)
+          expect(c.get([:database, type.to_sym], :status, :gauge).value).to eql(LogStash::Filters::Geoip::DatabaseMetric::DATABASE_CC)
           expect(c.get([:database, type.to_sym], :fail_check_in_days, :gauge).value).to be_nil
         end
         expect_initial_download_metric(c)
@@ -201,6 +201,18 @@ describe LogStash::Filters::Geoip do
         expect_download_metric_fail(c)
       end
 
+      it "set error msg in metric when download raise error" do
+        allow(mock_download_manager).to receive(:fetch_database).and_raise('boom')
+        expect(db_manager).to receive(:check_age)
+        expect(db_manager).to receive(:clean_up_database)
+
+        db_manager.send(:execute_download_job)
+
+        c = metric_collector(db_manager)
+        expect_download_metric_fail(c)
+        expect(c.get([:download_stats], :last_error_msg, :gauge).value).to eql('boom')
+      end
+
       def expect_download_metric_success(c)
         expect(c.get([:download_stats], :last_checked_at, :gauge).value).to match /#{now_in_ymd}/
         expect(c.get([:download_stats], :successes, :counter).value).to eql(1)
@@ -248,6 +260,7 @@ describe LogStash::Filters::Geoip do
 
           c = metric_collector(db_manager)
           expect_database_metric(c, LogStash::Filters::Geoip::DatabaseMetric::DATABASE_EXPIRED, second_dirname_in_ymd, 33)
+          expect(c.get([:download_stats], :last_error_msg, :gauge).value).to match /GeoIP plugin needs to stop using MaxMind database in order to be compliant/
         end
       end
 
@@ -284,7 +297,7 @@ describe LogStash::Filters::Geoip do
       end
 
       def expect_healthy_database_metric(c)
-        expect(c.get([:database, CITY.to_sym], :status, :gauge).value).to eql(LogStash::Filters::Geoip::DatabaseMetric::DATABASE_INIT)
+        expect(c.get([:database, CITY.to_sym], :status, :gauge).value).to eql(LogStash::Filters::Geoip::DatabaseMetric::DATABASE_CC)
         expect(c.get([:database, CITY.to_sym], :last_updated_at, :gauge).value).to be_nil
         expect(c.get([:database, CITY.to_sym], :fail_check_in_days, :gauge).value).to be_nil
       end

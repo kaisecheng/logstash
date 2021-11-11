@@ -18,8 +18,9 @@ module LogStash module Filters module Geoip class DownloadManager
   include LogStash::Util::Loggable
   include LogStash::Filters::Geoip::Util
 
-  def initialize(metadata)
+  def initialize(metadata, database_metric)
     @metadata = metadata
+    @database_metric = database_metric
   end
 
   GEOIP_HOST = "https://geoip.elastic.co".freeze
@@ -54,6 +55,7 @@ module LogStash module Filters module Geoip class DownloadManager
           [database_type, true, dirname, new_database_path]
         rescue => e
           logger.error(e.message, error_details(e, logger))
+          @database_metric.set_download_error(e.message)
           [database_type, false, nil, nil]
         end
       end
