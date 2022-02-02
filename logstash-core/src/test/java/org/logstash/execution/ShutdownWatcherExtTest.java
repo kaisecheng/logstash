@@ -45,6 +45,7 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Test;
+import org.logstash.RubyTestBase;
 import org.logstash.RubyUtil;
 
 import static org.junit.Assert.assertFalse;
@@ -54,7 +55,7 @@ import static org.junit.Assert.assertTrue;
  * Tests for {@link ShutdownWatcherExt}.
  */
 @NotThreadSafe
-public final class ShutdownWatcherExtTest {
+public final class ShutdownWatcherExtTest extends RubyTestBase {
 
     private static final String CONFIG = "log4j2-test1.xml";
     private static final Path PIPELINE_TEMPLATE = Paths.get("./src/test/resources/shutdown_watcher_ext_pipeline_template.rb").toAbsolutePath();
