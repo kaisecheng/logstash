@@ -35,7 +35,7 @@ import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
-public class FileCheckpointIOTest {
+public class FileCheckpointIOTestTask {
     private Path checkpointFolder;
     private CheckpointIO io;
 

@@ -20,6 +20,7 @@
 
 package org.logstash.ackedqueue;
 
+import org.logstash.ackedqueue.io.CheckpointIO;
 import org.logstash.ackedqueue.io.PageIO;
 
 import java.io.IOException;
@@ -35,8 +36,8 @@ class PageFactory {
      * @param pageIO the {@link PageIO} delegate
      * @return {@link Page} the new head page
      */
-    public static Page newHeadPage(int pageNum, Queue queue, PageIO pageIO) {
-        return new Page(pageNum, queue, 0, 0, 0, new BitSet(), pageIO, true);
+    public static Page newHeadPage(int pageNum, Queue queue, PageIO pageIO, int checkpointMaxAcks, int checkpointMaxWrite) {
+        return new Page(pageNum, queue, 0, 0, 0, new BitSet(), pageIO, true, checkpointMaxAcks, checkpointMaxWrite);
     }
 
     /**
@@ -47,7 +48,7 @@ class PageFactory {
      * @param pageIO the {@link PageIO} delegate
      * @return {@link Page} the new head page
      */
-    public static Page newHeadPage(Checkpoint checkpoint, Queue queue, PageIO pageIO) throws IOException {
+    public static Page newHeadPage(Checkpoint checkpoint, Queue queue, PageIO pageIO, int checkpointMaxAcks, int checkpointMaxWrite) throws IOException {
         final Page p = new Page(
                 checkpoint.getPageNum(),
                 queue,
@@ -56,7 +57,9 @@ class PageFactory {
                 checkpoint.getFirstUnackedSeqNum(),
                 new BitSet(),
                 pageIO,
-                true
+                true,
+                checkpointMaxAcks,
+                checkpointMaxWrite
         );
         try {
             assert checkpoint.getMinSeqNum() == pageIO.getMinSeqNum() && checkpoint.getElementCount() == pageIO.getElementCount() :
@@ -82,7 +85,7 @@ class PageFactory {
      * @param pageIO the {@link PageIO} delegate
      * @return {@link Page} the new tail page
      */
-    public static Page newTailPage(Checkpoint checkpoint, Queue queue, PageIO pageIO) throws IOException {
+    public static Page newTailPage(Checkpoint checkpoint, Queue queue, PageIO pageIO,  int checkpointMaxAcks, int checkpointMaxWrite) throws IOException {
         final Page p = new Page(
                 checkpoint.getPageNum(),
                 queue,
@@ -91,7 +94,9 @@ class PageFactory {
                 checkpoint.getFirstUnackedSeqNum(),
                 new BitSet(),
                 pageIO,
-                false
+                false,
+                checkpointMaxAcks,
+                checkpointMaxWrite
         );
 
         try {

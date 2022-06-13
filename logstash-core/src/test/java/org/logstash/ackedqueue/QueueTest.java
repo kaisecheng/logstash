@@ -928,7 +928,12 @@ public class QueueTest {
     @Test
     public void testZeroByteFullyAckedPageOnOpen() throws IOException {
         Queueable element = new StringElement("0123456789"); // 10 bytes
-        Settings settings = TestSettings.persistedQueueSettings(computeCapacityForMmapPageIO(element), dataPath);
+        Settings settings = SettingsImpl.fileSettingsBuilder(dataPath)
+                            .capacity(computeCapacityForMmapPageIO(element))
+                            .checkpointMaxWrites(1)
+                            .checkpointMaxAcks(1)
+                            .elementClass(StringElement.class)
+                            .build();
 
         // the goal here is to recreate a condition where the queue has a tail page of size zero with
         // a checkpoint that indicates it is full acknowledged
@@ -950,7 +955,7 @@ public class QueueTest {
             Page tp = q.tailPages.get(0);
             Batch b = new Batch(tp.read(1), q);
             assertThat(b.getElements().get(0), is(element1));
-            tp.ack(firstSeq, 1, 1);
+            tp.ack(firstSeq, 1);
             assertThat(tp.isFullyAcked(), is(true));
 
         }

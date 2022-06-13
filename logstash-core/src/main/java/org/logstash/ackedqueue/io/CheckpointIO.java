@@ -34,8 +34,12 @@ public interface CheckpointIO {
     void write(String fileName, Checkpoint checkpoint) throws IOException;
 
     Checkpoint read(String fileName) throws IOException;
+    Checkpoint readHeadCheckpoint() throws IOException;
+    Checkpoint readTailCheckpoint(int pageNum) throws IOException;
 
     void purge(String fileName) throws IOException;
+    void purgeHeadCheckpoint() throws IOException;
+    void purgeTailCheckpoint(int pageNum) throws IOException;
 
     // @return the head page checkpoint file name
     String headFileName();

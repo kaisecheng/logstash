@@ -55,7 +55,7 @@ public class HeadPageTest {
             q.open();
             PageIO pageIO = new MmapPageIOV2(0, 100, Paths.get(dataPath));
             pageIO.create();
-            try (final Page p = PageFactory.newHeadPage(0, q, pageIO)) {
+            try (final Page p = PageFactory.newHeadPage(0, q, pageIO, 1024, 1024)) {
                 assertThat(p.getPageNum(), is(equalTo(0)));
                 assertThat(p.isFullyRead(), is(true));
                 assertThat(p.isFullyAcked(), is(false));
@@ -77,7 +77,7 @@ public class HeadPageTest {
             Page p = q.headPage;
 
             assertThat(p.hasSpace(element.serialize().length), is(true));
-            p.write(element.serialize(), 0, 1);
+            p.write(element.serialize(), 0);
 
             assertThat(p.hasSpace(element.serialize().length), is(false));
             assertThat(p.isFullyRead(), is(false));
@@ -96,7 +96,7 @@ public class HeadPageTest {
             Page p = q.headPage;
 
             assertThat(p.hasSpace(element.serialize().length), is(true));
-            p.write(element.serialize(), seqNum, 1);
+            p.write(element.serialize(), seqNum);
 
             Batch b = new Batch(p.read(1), q);
 
@@ -119,7 +119,7 @@ public class HeadPageTest {
             Page p = q.headPage;
 
             assertThat(p.isEmpty(), is(true));
-            p.write(element.serialize(), 1, 1);
+            p.write(element.serialize(), 1);
             assertThat(p.isEmpty(), is(false));
             Batch b = q.readBatch(1, TimeUnit.SECONDS.toMillis(1));
             assertThat(p.isEmpty(), is(false));
@@ -141,7 +141,7 @@ public class HeadPageTest {
             Page p = q.headPage;
 
             assertThat(p.hasSpace(element.serialize().length), is(true));
-            p.write(element.serialize(), seqNum, 1);
+            p.write(element.serialize(), seqNum);
 
             Batch b = new Batch(p.read(10), q);
 

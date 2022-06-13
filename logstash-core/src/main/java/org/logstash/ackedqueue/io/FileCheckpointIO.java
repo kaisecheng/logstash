@@ -91,6 +91,16 @@ public class FileCheckpointIO implements CheckpointIO {
     }
 
     @Override
+    public Checkpoint readHeadCheckpoint() throws IOException {
+        return read(headFileName());
+    }
+
+    @Override
+    public Checkpoint readTailCheckpoint(int pageNum) throws IOException {
+        return read(tailFileName(pageNum));
+    }
+
+    @Override
     public Checkpoint write(String fileName, int pageNum, int firstUnackedPageNum, long firstUnackedSeqNum, long minSeqNum, int elementCount) throws IOException {
         Checkpoint checkpoint = new Checkpoint(pageNum, firstUnackedPageNum, firstUnackedSeqNum, minSeqNum, elementCount);
         write(fileName, checkpoint);
@@ -132,6 +142,16 @@ public class FileCheckpointIO implements CheckpointIO {
         Path path = dirPath.resolve(fileName);
         logger.debug("CheckpointIO deleting '{}'", path);
         Files.delete(path);
+    }
+
+    @Override
+    public void purgeHeadCheckpoint() throws IOException {
+        purge(headFileName());
+    }
+
+    @Override
+    public void purgeTailCheckpoint(int pageNum) throws IOException {
+        purge(tailFileName(pageNum));
     }
 
     // @return the head page checkpoint file name

@@ -25,6 +25,9 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.BitSet;
 import org.codehaus.commons.nullanalysis.NotNull;
+import org.logstash.ackedqueue.checkpoint.CheckpointAction;
+import org.logstash.ackedqueue.checkpoint.HeadCheckpointAction;
+import org.logstash.ackedqueue.checkpoint.TailCheckpointAction;
 import org.logstash.ackedqueue.io.CheckpointIO;
 import org.logstash.ackedqueue.io.PageIO;
 
@@ -45,9 +48,10 @@ public final class Page implements Closeable {
     // TODO: go steal LocalCheckpointService in feature/seq_no from ES
     // TODO: https://github.com/elastic/elasticsearch/blob/feature/seq_no/core/src/main/java/org/elasticsearch/index/seqno/LocalCheckpointService.java
     protected BitSet ackedSeqNums;
-    protected Checkpoint lastCheckpoint;
+    protected CheckpointAction checkpointAction;
 
-    public Page(int pageNum, Queue queue, long minSeqNum, int elementCount, long firstUnreadSeqNum, BitSet ackedSeqNums, @NotNull PageIO pageIO, boolean writable) {
+    public Page(int pageNum, Queue queue, long minSeqNum, int elementCount, long firstUnreadSeqNum, BitSet ackedSeqNums, @NotNull PageIO pageIO, boolean writable,
+                int checkpointMaxAcks, int checkpointMaxWrites) {
         this.pageNum = pageNum;
         this.queue = queue;
 
@@ -55,9 +59,14 @@ public final class Page implements Closeable {
         this.elementCount = elementCount;
         this.firstUnreadSeqNum = firstUnreadSeqNum;
         this.ackedSeqNums = ackedSeqNums;
-        this.lastCheckpoint = new Checkpoint(0, 0, 0, 0, 0);
         this.pageIO = pageIO;
         this.writable = writable;
+
+        if (this.writable) {
+            this.checkpointAction = new HeadCheckpointAction(this, checkpointMaxAcks, checkpointMaxWrites, queue);
+        } else {
+            this.checkpointAction = new TailCheckpointAction(this, checkpointMaxAcks, checkpointMaxWrites, queue);
+        }
 
         assert this.pageIO != null : "invalid null pageIO";
     }
@@ -67,7 +76,7 @@ public final class Page implements Closeable {
     }
 
     /**
-     * @param limit the maximum number of elements to read, actual number readcan be smaller
+     * @param limit the maximum number of elements to read, actual number read can be smaller
      * @return {@link SequencedList} collection of serialized elements read
      * @throws IOException if an IO error occurs
      */
@@ -84,7 +93,7 @@ public final class Page implements Closeable {
         return serialized;
     }
 
-    public void write(byte[] bytes, long seqNum, int checkpointMaxWrites) throws IOException {
+    public void write(byte[] bytes, long seqNum) throws IOException {
         if (! this.writable) {
             throw new IllegalStateException(String.format("page=%d is not writable", this.pageNum));
         }
@@ -97,12 +106,7 @@ public final class Page implements Closeable {
         }
         this.elementCount++;
 
-        // force a checkpoint if we wrote checkpointMaxWrites elements since last checkpoint
-        // the initial condition of an "empty" checkpoint, maxSeqNum() will return -1
-        if (checkpointMaxWrites > 0 && (seqNum >= this.lastCheckpoint.maxSeqNum() + checkpointMaxWrites)) {
-            // did we write more than checkpointMaxWrites elements? if so checkpoint now
-            checkpoint();
-        }
+        ((HeadCheckpointAction)this.checkpointAction).checkpointWrite(seqNum);
     }
 
     /**
@@ -140,11 +144,10 @@ public final class Page implements Closeable {
      *
      * @param firstSeqNum Lowest sequence number to ack
      * @param count Number of elements to ack
-     * @param checkpointMaxAcks number of acks before forcing a checkpoint
      * @return true if Page and its checkpoint were purged as a result of being fully acked
      * @throws IOException if an IO error occurs
      */
-    public boolean ack(long firstSeqNum, int count, int checkpointMaxAcks) throws IOException {
+    public boolean ack(long firstSeqNum, int count) throws IOException {
         assert firstSeqNum >= this.minSeqNum :
             String.format("seqNum=%d is smaller than minSeqnum=%d", firstSeqNum, this.minSeqNum);
         final long maxSeqNum = firstSeqNum + count;
@@ -160,88 +163,43 @@ public final class Page implements Closeable {
         final long firstUnackedSeqNum = firstUnackedSeqNum();
 
         final boolean done = isFullyAcked();
-        if (done) {
-            checkpoint();
-
-            // purge fully acked tail page
-            if (!this.writable) {
-                purge();
-                final CheckpointIO cpIO = queue.getCheckpointIO();
-                cpIO.purge(cpIO.tailFileName(pageNum));
-            }
-            assert firstUnackedSeqNum >= this.minSeqNum + this.elementCount - 1:
-                    String.format("invalid firstUnackedSeqNum=%d for minSeqNum=%d and elementCount=%d and cardinality=%d", firstUnackedSeqNum, this.minSeqNum, this.elementCount, this.ackedSeqNums.cardinality());
-
-        } else if (checkpointMaxAcks > 0 && firstUnackedSeqNum >= this.lastCheckpoint.getFirstUnackedSeqNum() + checkpointMaxAcks) {
-            // did we acked more than checkpointMaxAcks elements? if so checkpoint now
-            checkpoint();
-        }
+        this.checkpointAction.checkpointAck(done);
         return done;
     }
 
-    public void checkpoint() throws IOException {
-        if (this.writable) {
-            headPageCheckpoint();
-        } else {
-            tailPageCheckpoint();
-        }
-    }
-
-    private void headPageCheckpoint() throws IOException {
-        if (this.elementCount > this.lastCheckpoint.getElementCount()) {
-            // fsync & checkpoint if data written since last checkpoint
-
-            this.pageIO.ensurePersisted();
-            this.forceCheckpoint();
-        } else {
-            Checkpoint checkpoint = new Checkpoint(this.pageNum, this.queue.firstUnackedPageNum(), this.firstUnackedSeqNum(), this.minSeqNum, this.elementCount);
-            if (! checkpoint.equals(this.lastCheckpoint)) {
-                // checkpoint only if it changed since last checkpoint
-
-                // non-dry code with forceCheckpoint() to avoid unnecessary extra new Checkpoint object creation
-                CheckpointIO io = this.queue.getCheckpointIO();
-                io.write(io.headFileName(), checkpoint);
-                this.lastCheckpoint = checkpoint;
-            }
-        }
-
-    }
-
-    public void tailPageCheckpoint() throws IOException {
-        // since this is a tail page and no write can happen in this page, there is no point in performing a fsync on this page, just stamp checkpoint
-        CheckpointIO io = this.queue.getCheckpointIO();
-        this.lastCheckpoint = io.write(io.tailFileName(this.pageNum), this.pageNum, 0, this.firstUnackedSeqNum(), this.minSeqNum, this.elementCount);
+    public void assertFirstUnackedSeqNum() {
+        final long firstUnackedSeqNum = firstUnackedSeqNum();
+        assert firstUnackedSeqNum >= this.minSeqNum + this.elementCount - 1:
+                String.format("invalid firstUnackedSeqNum=%d for minSeqNum=%d and elementCount=%d and cardinality=%d", firstUnackedSeqNum, this.minSeqNum, this.elementCount, this.ackedSeqNums.cardinality());
     }
 
 
     public void ensurePersistedUpto(long seqNum) throws IOException {
-        long lastCheckpointUptoSeqNum = this.lastCheckpoint.getMinSeqNum() + this.lastCheckpoint.getElementCount();
+        ((HeadCheckpointAction)this.checkpointAction).ensurePersistedUpto(seqNum);
+    }
 
-        // if the last checkpoint for this headpage already included the given seqNum, no need to fsync/checkpoint
-        if (seqNum > lastCheckpointUptoSeqNum) {
-            // head page checkpoint does a data file fsync
-            checkpoint();
-        }
+    public void checkpoint() throws IOException {
+        // head checkpoint
+        this.checkpointAction.checkpoint();
     }
 
     public void forceCheckpoint() throws IOException {
-        Checkpoint checkpoint = new Checkpoint(this.pageNum, this.queue.firstUnackedPageNum(), this.firstUnackedSeqNum(), this.minSeqNum, this.elementCount);
-        CheckpointIO io = this.queue.getCheckpointIO();
-        io.write(io.headFileName(), checkpoint);
-        this.lastCheckpoint = checkpoint;
+        // force write head checkpoint
+        this.checkpointAction.writeCheckpointFile();
     }
 
     public void behead() throws IOException {
         assert this.writable == true : "cannot behead a tail page";
 
-        headPageCheckpoint();
+        // head checkpoint
+        this.checkpointAction.checkpoint();
 
         this.writable = false;
-        this.lastCheckpoint = new Checkpoint(0, 0, 0, 0, 0);
 
         // first thing that must be done after beheading is to create a new checkpoint for that new tail page
         // tail page checkpoint does NOT includes a fsync
-        tailPageCheckpoint();
+        this.checkpointAction = ((HeadCheckpointAction)this.checkpointAction).toTailCheckpointAction();
+        this.checkpointAction.checkpoint();
     }
 
     /**
@@ -267,7 +225,7 @@ public final class Page implements Closeable {
     }
 
     public void close() throws IOException {
-        checkpoint();
+        this.checkpointAction.writeCheckpointFile();
         this.pageIO.close();
     }
 
@@ -295,7 +253,7 @@ public final class Page implements Closeable {
         return this.minSeqNum + this.elementCount - 1;
     }
 
-    protected long firstUnackedSeqNum() {
+    public long firstUnackedSeqNum() {
         // TODO: eventually refactor to use new bithandling class
         return this.ackedSeqNums.nextClearBit(0) + this.minSeqNum;
     }

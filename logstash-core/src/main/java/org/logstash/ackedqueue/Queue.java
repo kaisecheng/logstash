@@ -195,7 +195,7 @@ public final class Queue implements Closeable {
 
         Checkpoint headCheckpoint;
         try {
-            headCheckpoint = this.checkpointIO.read(checkpointIO.headFileName());
+            headCheckpoint = this.checkpointIO.readHeadCheckpoint();
         } catch (NoSuchFileException e) {
             // if there is no head checkpoint, create a new headpage and checkpoint it and exit method
 
@@ -234,7 +234,7 @@ public final class Queue implements Closeable {
                 purgeTailPage(cp, pageIO);
             } else {
                 pageIO.open(cp.getMinSeqNum(), cp.getElementCount());
-                addTailPage(PageFactory.newTailPage(cp, this, pageIO));
+                addTailPage(PageFactory.newTailPage(cp, this, pageIO, this.checkpointMaxAcks, this.checkpointMaxWrites));
                 pqSizeBytes += pageIO.getCapacity();
             }
 
@@ -271,7 +271,7 @@ public final class Queue implements Closeable {
             }
             headCheckpoint = new Checkpoint(headCheckpoint.getPageNum(), headCheckpoint.getFirstUnackedPageNum(), firstUnackedSeqNum, pageIO.getMinSeqNum(), pageIO.getElementCount());
         }
-        this.headPage = PageFactory.newHeadPage(headCheckpoint, this, pageIO);
+        this.headPage = PageFactory.newHeadPage(headCheckpoint, this, pageIO, this.checkpointMaxAcks, this.checkpointMaxWrites);
 
         if (this.headPage.getMinSeqNum() <= 0 && this.headPage.getElementCount() <= 0) {
             // head page is empty, let's keep it as-is
@@ -318,7 +318,7 @@ public final class Queue implements Closeable {
             if (pageIO.isCorruptedPage()) {
                 logger.debug("Queue is fully acked. Found zero byte page.{}. Recreate checkpoint.head and delete corrupted page", headCheckpoint.getPageNum());
 
-                this.checkpointIO.purge(checkpointIO.headFileName());
+                this.checkpointIO.purgeHeadCheckpoint();
                 pageIO.purge();
 
                 if (headCheckpoint.maxSeqNum() > this.seqNum) {
@@ -356,7 +356,7 @@ public final class Queue implements Closeable {
 
         if (this.tailPages.size() == 0) {
             // this is the first tail page and it is fully acked so just purge it
-            this.checkpointIO.purge(this.checkpointIO.tailFileName(checkpoint.getPageNum()));
+            this.checkpointIO.purgeTailCheckpoint(checkpoint.getPageNum());
         }
     }
 
@@ -385,7 +385,7 @@ public final class Queue implements Closeable {
         PageIO headPageIO = new MmapPageIOV2(pageNum, this.pageCapacity, this.dirPath);
         headPageIO.create();
         logger.debug("created new head page: {}", headPageIO);
-        this.headPage = PageFactory.newHeadPage(pageNum, this, headPageIO);
+        this.headPage = PageFactory.newHeadPage(pageNum, this, headPageIO, this.checkpointMaxAcks, this.checkpointMaxWrites);
         this.headPage.forceCheckpoint();
     }
 
@@ -434,7 +434,7 @@ public final class Queue implements Closeable {
             }
 
             long seqNum = this.seqNum += 1;
-            this.headPage.write(data, seqNum, this.checkpointMaxWrites);
+            this.headPage.write(data, seqNum);
             this.unreadCount++;
 
             notEmpty.signal();
@@ -710,10 +710,10 @@ public final class Queue implements Closeable {
         lock.lock();
         try {
             if (containsSeq(headPage, firstAckSeqNum)) {
-                this.headPage.ack(firstAckSeqNum, ackCount, this.checkpointMaxAcks);
+                this.headPage.ack(firstAckSeqNum, ackCount);
             } else {
                 final int resultIndex = binaryFindPageForSeqnum(firstAckSeqNum);
-                if (tailPages.get(resultIndex).ack(firstAckSeqNum, ackCount, this.checkpointMaxAcks)) {
+                if (tailPages.get(resultIndex).ack(firstAckSeqNum, ackCount)) {
                     this.tailPages.remove(resultIndex);
                     notFull.signalAll();
                 }
