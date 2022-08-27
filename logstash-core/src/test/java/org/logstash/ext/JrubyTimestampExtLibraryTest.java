@@ -22,6 +22,7 @@ package org.logstash.ext;
 
 import java.util.concurrent.TimeUnit;
 import org.assertj.core.api.Assertions;
+import org.jruby.RubyTime;
 import org.jruby.exceptions.RaiseException;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
