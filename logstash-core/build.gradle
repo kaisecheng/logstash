@@ -183,6 +183,7 @@ dependencies {
     implementation('com.google.googlejavaformat:google-java-format:1.15.0') {
         exclude group: 'com.google.guava', module: 'guava'
     }
+    api "co.elastic.apm:apm-agent-api:1.33.0"
     implementation 'org.javassist:javassist:3.29.0-GA'
     testImplementation "org.apache.logging.log4j:log4j-core:${log4jVersion}:tests"
     testImplementation 'org.hamcrest:hamcrest:2.2'

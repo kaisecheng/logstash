@@ -30,6 +30,7 @@ require "stud/trap"
 require "uri"
 require "socket"
 require "securerandom"
+require 'elastic_apm'
 
 LogStash::Environment.load_locale!
 

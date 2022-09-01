@@ -18,13 +18,14 @@
 require "logstash/api/app_helpers"
 require "logstash/api/command_factory"
 require "logstash/api/errors"
+require 'elastic_apm'
 
 module LogStash
   module Api
     module Modules
       class Base < ::Sinatra::Base
-
         helpers AppHelpers
+        use ElasticAPM::Middleware
 
         # These options never change
         # Sinatra isn't good at letting you change internal settings at runtime

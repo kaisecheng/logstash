@@ -72,3 +72,10 @@
 
 # Copy the logging context from parent threads to children
 -Dlog4j2.isThreadContextMapInheritable=true
+
+-javaagent:/Users/kcheng/soft/elastic-agent-jar/elastic-apm-agent-1.33.0.jar
+-Delastic.apm.service_name=logstash-java
+-Delastic.apm.server_urls=YOUR_APM_SERVER_URL
+-Delastic.apm.secret_token=YOUR_APM_SECRET_TOKEN
+-Delastic.apm.application_packages=org.logstash
+#-Delastic.apm.trace_methods=org.logstash.*

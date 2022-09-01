@@ -48,6 +48,7 @@ require 'logstash/plugins'
 require "logstash/modules/util"
 require "logstash/bootstrap_check/default_config"
 require 'logstash/deprecation_message'
+require 'elastic_apm'
 
 java_import 'org.logstash.FileLockFactory'
 java_import 'org.logstash.util.JavaVersion'
@@ -283,6 +284,10 @@ class LogStash::Runner < Clamp::StrictCommand
   end
 
   def execute
+    ElasticAPM.start(service_name: 'logstash-ruby',
+                     server_url: YOUR_APM_SERVER_URL,
+                     secret_token: YOUR_APM_SECRET_TOKEN)
+
     LogStash::Util::SettingsHelper.post_process
 
     require "logstash/util"
@@ -447,6 +452,7 @@ class LogStash::Runner < Clamp::StrictCommand
     end
     return 1
   ensure
+    ElasticAPM.stop
     Stud::untrap("INT", sigint_id) unless sigint_id.nil?
     Stud::untrap("TERM", sigterm_id) unless sigterm_id.nil?
     Stud::untrap("HUP", sighup_id) unless sighup_id.nil?

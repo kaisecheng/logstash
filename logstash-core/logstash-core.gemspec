@@ -87,4 +87,7 @@ Gem::Specification.new do |gem|
   # TEMPORARY: racc-1.6.0 doesn't have JAVA counterpart (yet)
   # SEE: https://github.com/ruby/racc/issues/172
   gem.add_runtime_dependency "racc", "~> 1.5.2" #(Ruby license)
+
+  gem.add_runtime_dependency "http", "= 3.3.0"
+  gem.add_runtime_dependency "elastic-apm", "~> 4.5"
 end

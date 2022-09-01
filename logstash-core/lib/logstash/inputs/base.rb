@@ -20,6 +20,7 @@ require "logstash/plugin"
 require "logstash/config/mixin"
 require "logstash/codecs/base"
 require "logstash/util/decorators"
+require "elastic-apm"
 
 # This is the base class for Logstash inputs.
 class LogStash::Inputs::Base < LogStash::Plugin
@@ -136,6 +137,15 @@ class LogStash::Inputs::Base < LogStash::Plugin
   def decorate(event)
     # Only set 'type' if not already set. This is backwards-compatible behavior
     event.set("type", @type) if @type && !event.include?("type")
+
+    if (span = ElasticAPM.current_span)
+      event.set("[span][id]", span.trace_context.id)
+    end
+
+    if (transaction = ElasticAPM.current_transaction || ElasticAPM.current_span&.transaction)
+      event.set("[transaction][id]", transaction.trace_context.traceparent.id)
+      event.set("[trace][id]", transaction.trace_context.traceparent.trace_id)
+    end
 
     LogStash::Util::Decorators.add_fields(@add_field,event,"inputs/#{self.class.name}")
     LogStash::Util::Decorators.add_tags(@tags,event,"inputs/#{self.class.name}")
