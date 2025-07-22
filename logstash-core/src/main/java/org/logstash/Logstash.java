@@ -20,14 +20,16 @@
 
 package org.logstash;
 
-import java.io.IOError;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.PrintStream;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Properties;
-
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.resources.Resource;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
+import io.opentelemetry.semconv.ServiceAttributes;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jruby.Ruby;
@@ -40,6 +42,13 @@ import org.jruby.exceptions.RaiseException;
 import org.jruby.runtime.builtin.IRubyObject;
 
 import javax.annotation.Nullable;
+import java.io.IOError;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.PrintStream;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Properties;
 
 /**
  * Logstash Main Entrypoint.
@@ -85,6 +94,35 @@ public final class Logstash implements Runnable, AutoCloseable {
             );
         }
         installGlobalUncaughtExceptionHandler();
+
+        String serviceName = System.getenv("OTEL_SERVICE_NAME");
+
+        Resource resource = Resource.getDefault().merge(Resource.create(
+                Attributes.of(
+                        ServiceAttributes.SERVICE_NAME, serviceName,
+                        ServiceAttributes.SERVICE_VERSION, "1.0"
+                )
+        ));
+
+        SdkTracerProvider sdkTracerProvider = SdkTracerProvider.builder()
+                .setResource(resource)
+                // add span processor to add baggage as span attributes
+                .addSpanProcessor(BatchSpanProcessor.builder(OtlpGrpcSpanExporter
+                        .builder()
+                        .setEndpoint(System.getenv(
+                                "OTEL_EXPORTER_OTLP_ENDPOINT"))
+                        .addHeader("Authorization", "Bearer " + System.getenv("ELASTIC_APM_SECRET_TOKEN"))
+                        .build()).build())
+                .build();
+
+        OpenTelemetrySdk sdk = OpenTelemetrySdk.builder()
+                .setTracerProvider(sdkTracerProvider)
+                .setPropagators(ContextPropagators
+                        .create(W3CTraceContextPropagator.getInstance()))
+                .build();
+
+        GlobalOpenTelemetry.set(sdk);
+        Runtime.getRuntime().addShutdownHook(new Thread(sdk::close));
 
         final Path home = Paths.get(lsHome).toAbsolutePath();
         try (
