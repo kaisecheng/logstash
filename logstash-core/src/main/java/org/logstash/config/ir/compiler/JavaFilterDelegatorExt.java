@@ -23,15 +23,17 @@ package org.logstash.config.ir.compiler;
 import co.elastic.logstash.api.Event;
 import co.elastic.logstash.api.Filter;
 import co.elastic.logstash.api.FilterMatchListener;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Scope;
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
 import org.jruby.RubyHash;
 import org.jruby.RubyString;
-import org.jruby.RubySymbol;
 import org.jruby.anno.JRubyClass;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.logstash.OTelUtil;
 import org.logstash.RubyUtil;
 import org.logstash.ext.JrubyEventExtLibrary;
 import org.logstash.instrument.metrics.AbstractNamespacedMetricExt;
@@ -54,6 +56,8 @@ public class JavaFilterDelegatorExt extends AbstractFilterDelegatorExt {
 
     private transient FilterMatchListener filterMatchListener;
 
+    private String pluginShortName;
+
     public JavaFilterDelegatorExt(final Ruby runtime, final RubyClass metaClass) {
         super(runtime, metaClass);
     }
@@ -69,21 +73,27 @@ public class JavaFilterDelegatorExt extends AbstractFilterDelegatorExt {
         instance.initMetrics(id, scopedMetric);
         instance.filter = filter;
         instance.initializeFilterMatchListener(pluginArgs);
+        instance.pluginShortName = String.format("%s-%s:%s", configName, "output", filter.getId());
         return instance;
     }
 
-    @SuppressWarnings({"unchecked","rawtypes"})
+    @SuppressWarnings({"unchecked","rawtypes", "try"})
     @Override
     protected RubyArray doMultiFilter(final RubyArray batch) {
-        List<Event> inputEvents = (List<Event>) batch.stream()
-                .map(x -> ((JrubyEventExtLibrary.RubyEvent) x).getEvent())
-                .collect(Collectors.toList());
-        Collection<Event> outputEvents = filter.filter(inputEvents, filterMatchListener);
-        RubyArray newBatch = RubyArray.newArray(RubyUtil.RUBY, outputEvents.size());
-        for (Event outputEvent : outputEvents) {
-            newBatch.add(JrubyEventExtLibrary.RubyEvent.newRubyEvent(RubyUtil.RUBY, (org.logstash.Event)outputEvent));
+        Span span = OTelUtil.newSpan(pluginShortName);
+        try (Scope scope = span.makeCurrent()) {
+            List<Event> inputEvents = (List<Event>) batch.stream()
+                    .map(x -> ((JrubyEventExtLibrary.RubyEvent) x).getEvent())
+                    .collect(Collectors.toList());
+            Collection<Event> outputEvents = filter.filter(inputEvents, filterMatchListener);
+            RubyArray newBatch = RubyArray.newArray(RubyUtil.RUBY, outputEvents.size());
+            for (Event outputEvent : outputEvents) {
+                newBatch.add(JrubyEventExtLibrary.RubyEvent.newRubyEvent(RubyUtil.RUBY, (org.logstash.Event)outputEvent));
+            }
+            return newBatch;
+        } finally {
+            span.end();
         }
-        return newBatch;
     }
 
     @Override

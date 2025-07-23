@@ -45,8 +45,6 @@ public final class FilterDelegatorExt extends AbstractFilterDelegatorExt {
 
     private static final long serialVersionUID = 1L;
 
-    private static final String FILTER_METHOD_NAME = "multi_filter";
-
     private RubyClass filterClass;
 
     private transient IRubyObject filter;

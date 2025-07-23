@@ -19,12 +19,12 @@
 
 package org.logstash.execution;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.LongAdder;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.logstash.config.ir.CompiledPipeline;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Pipeline execution worker, it's responsible to execute filters and output plugins for each {@link QueueBatch} that
@@ -107,6 +107,7 @@ public final class WorkerLoop implements Runnable {
         }
     }
 
+    @SuppressWarnings("try")
     private boolean abortableCompute(QueueBatch batch, boolean flush, boolean shutdown) {
         boolean isNackBatch = false;
         try {

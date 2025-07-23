@@ -24,6 +24,7 @@ import co.elastic.logstash.api.EventFactory;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.ThreadContext;
 import org.joda.time.DateTime;
 import org.jruby.RubyNil;
 import org.jruby.RubyString;
@@ -42,6 +43,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import static org.logstash.OTelUtil.getCurrentContextAsMap;
+import static org.logstash.OTelUtil.withParentSpan;
+import static org.logstash.OTelUtil.withSpan;
 import static org.logstash.ObjectMappers.CBOR_MAPPER;
 import static org.logstash.ObjectMappers.JSON_MAPPER;
 
@@ -66,6 +70,7 @@ public final class Event implements Cloneable, Queueable, co.elastic.logstash.ap
     public static final String TAGS = "tags";
     public static final String TAGS_FAILURE_TAG = "_tagsparsefailure";
     public static final String TAGS_FAILURE = "_tags";
+    public static final String TRACE = "@trace";
 
     private static final FieldReference TAGS_FIELD = FieldReference.from(TAGS);
     private static final FieldReference TAGS_FAILURE_FIELD = FieldReference.from(TAGS_FAILURE);
@@ -79,6 +84,14 @@ public final class Event implements Cloneable, Queueable, co.elastic.logstash.ap
         this.data.putInterned(VERSION, VERSION_ONE);
         this.cancelled = false;
         setTimestamp(Timestamp.now());
+
+        String spanName = String.format("%s.%s", ThreadContext.get("pipeline.id"),
+                ThreadContext.get("plugin.shortname") == null ? "new.event" : ThreadContext.get("plugin.shortname"));
+        withSpan(spanName, (span) -> {
+            // pass trace context to Event
+            this.setField(TRACE, getCurrentContextAsMap());
+            span.addEvent("event.created");
+        });
     }
 
     /**
@@ -105,7 +118,7 @@ public final class Event implements Cloneable, Queueable, co.elastic.logstash.ap
 
         if (this.data.containsKey(METADATA)) {
             this.metadata =
-                ConvertedMap.newFromMap((Map<String, Object>) this.data.remove(METADATA));
+                    ConvertedMap.newFromMap((Map<String, Object>) this.data.remove(METADATA));
         } else {
             this.metadata = new ConvertedMap(10);
         }
@@ -127,6 +140,16 @@ public final class Event implements Cloneable, Queueable, co.elastic.logstash.ap
             tag(TIMESTAMP_FAILURE_TAG);
             this.setField(TIMESTAMP_FAILURE_FIELD, providedTimestamp);
         }
+
+        // pass trace context to Event
+        String spanName = String.format("%s.%s", ThreadContext.get("pipeline.id"),
+                ThreadContext.get("plugin.shortname") == null ? "queue.deserialize.event" : ThreadContext.get("plugin.shortname"));
+        withParentSpan(spanName, this, (span) -> {
+            if (!this.data.containsKey(TRACE)) {
+                this.setField(TRACE, getCurrentContextAsMap());
+            }
+            span.addEvent("event.created");
+        });
     }
 
     @Override

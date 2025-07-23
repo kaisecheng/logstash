@@ -20,12 +20,10 @@
 
 package org.logstash.config.ir.compiler;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
-
 import co.elastic.logstash.api.Event;
+import co.elastic.logstash.api.Output;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Scope;
 import org.jruby.Ruby;
 import org.jruby.RubyClass;
 import org.jruby.RubyString;
@@ -33,10 +31,15 @@ import org.jruby.RubySymbol;
 import org.jruby.anno.JRubyClass;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.logstash.OTelUtil;
 import org.logstash.RubyUtil;
-import co.elastic.logstash.api.Output;
 import org.logstash.ext.JrubyEventExtLibrary;
 import org.logstash.instrument.metrics.AbstractMetricExt;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 @JRubyClass(name = "JavaOutputDelegator")
 public final class JavaOutputDelegatorExt extends AbstractOutputDelegatorExt {
@@ -54,6 +57,8 @@ public final class JavaOutputDelegatorExt extends AbstractOutputDelegatorExt {
     private transient Runnable registerAction;
 
     private transient Output output;
+
+    private String pluginShortName;
 
     public JavaOutputDelegatorExt(final Ruby runtime, final RubyClass metaClass) {
         super(runtime, metaClass);
@@ -84,12 +89,19 @@ public final class JavaOutputDelegatorExt extends AbstractOutputDelegatorExt {
         instance.outputFunction = instance::outputRubyEvents;
         instance.closeAction = instance::outputClose;
         instance.registerAction = instance::outputRegister;
+        instance.pluginShortName = String.format("%s-%s:%s", configName, "output", output.getId());
         return instance;
     }
 
+    @SuppressWarnings("try")
     void outputRubyEvents(Collection<JrubyEventExtLibrary.RubyEvent> e) {
-        List<Event> events = e.stream().map(JrubyEventExtLibrary.RubyEvent::getEvent).collect(Collectors.toList());
-        output.output(events);
+        Span span = OTelUtil.newSpan(pluginShortName);
+        try (Scope scope = span.makeCurrent()) {
+            List<Event> events = e.stream().map(JrubyEventExtLibrary.RubyEvent::getEvent).collect(Collectors.toList());
+            output.output(events);
+        } finally {
+            span.end();
+        }
     }
 
     void outputClose() {

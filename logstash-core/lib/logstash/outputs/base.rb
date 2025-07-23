@@ -17,11 +17,13 @@
 
 require "logstash/plugin"
 require "logstash/config/mixin"
+require "logstash/util/otel"
 require "concurrent/atomic/atomic_fixnum"
 
 class LogStash::Outputs::Base < LogStash::Plugin
   include LogStash::Util::Loggable
   include LogStash::Config::Mixin
+  include LogStash::Util::OTel
 
   config_name "output"
 
@@ -96,6 +98,13 @@ class LogStash::Outputs::Base < LogStash::Plugin
   end # def receive
 
   public
+
+  def multi_receive_with_trace(events)
+    events_with_parent_span("#{config_name}-output.#{id[0...6]}", events) do
+      multi_receive(events)
+    end
+  end
+
   # To be overridden in implementations
   def multi_receive(events)
     if @receives_encoded

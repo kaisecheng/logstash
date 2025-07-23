@@ -20,8 +20,6 @@
 
 package org.logstash.config.ir.compiler;
 
-import java.util.Collection;
-
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
@@ -36,15 +34,17 @@ import org.logstash.ext.JrubyEventExtLibrary;
 import org.logstash.instrument.metrics.AbstractMetricExt;
 import org.logstash.instrument.metrics.AbstractNamespacedMetricExt;
 import org.logstash.instrument.metrics.MetricKeys;
-import org.logstash.instrument.metrics.timer.TimerMetric;
 import org.logstash.instrument.metrics.counter.LongCounter;
+import org.logstash.instrument.metrics.timer.TimerMetric;
+
+import java.util.Collection;
 
 @JRubyClass(name = "AbstractOutputDelegator")
 public abstract class AbstractOutputDelegatorExt extends RubyObject {
 
     private static final long serialVersionUID = 1L;
 
-    public static final String OUTPUT_METHOD_NAME = "multi_receive";
+    public static final String OUTPUT_METHOD_NAME = "multi_receive_with_trace";
 
     private AbstractMetricExt metric;
 

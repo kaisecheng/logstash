@@ -44,6 +44,8 @@ public abstract class AbstractFilterDelegatorExt extends RubyObject {
 
     private static final long serialVersionUID = 1L;
 
+    protected static final String FILTER_METHOD_NAME = "multi_filter_with_trace";
+
     protected AbstractNamespacedMetricExt metricEvents;
 
     protected RubyString id;
@@ -125,7 +127,7 @@ public abstract class AbstractFilterDelegatorExt extends RubyObject {
         return id;
     }
 
-    @JRubyMethod(name = "multi_filter")
+    @JRubyMethod(name = FILTER_METHOD_NAME)
     @SuppressWarnings({"unchecked", "rawtypes"})
     public RubyArray multiFilter(final IRubyObject input) {
         RubyArray batch = (RubyArray) input;

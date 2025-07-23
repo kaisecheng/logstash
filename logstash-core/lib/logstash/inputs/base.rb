@@ -18,12 +18,14 @@
 require "logstash/plugin"
 require "logstash/config/mixin"
 require "logstash/codecs/base"
+require "logstash/util/otel"
 require "logstash/util/decorators"
 
 # This is the base class for Logstash inputs.
 class LogStash::Inputs::Base < LogStash::Plugin
   include LogStash::Util::Loggable
   include LogStash::Config::Mixin
+  include LogStash::Util::OTel
 
   config_name "input"
 

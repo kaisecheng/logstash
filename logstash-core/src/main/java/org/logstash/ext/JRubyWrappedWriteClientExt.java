@@ -20,9 +20,6 @@
 
 package org.logstash.ext;
 
-import java.util.Collection;
-import java.util.Map;
-
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
@@ -32,6 +29,7 @@ import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.logstash.Event;
 import org.logstash.execution.queue.QueueWriter;
 import org.logstash.instrument.metrics.AbstractMetricExt;
 import org.logstash.instrument.metrics.AbstractNamespacedMetricExt;
@@ -39,7 +37,15 @@ import org.logstash.instrument.metrics.MetricKeys;
 import org.logstash.instrument.metrics.counter.LongCounter;
 import org.logstash.instrument.metrics.timer.TimerMetric;
 
-import static org.logstash.instrument.metrics.MetricKeys.*;
+import java.util.Collection;
+import java.util.Map;
+
+import static org.logstash.OTelUtil.withParentSpan;
+import static org.logstash.instrument.metrics.MetricKeys.EVENTS_KEY;
+import static org.logstash.instrument.metrics.MetricKeys.INPUTS_KEY;
+import static org.logstash.instrument.metrics.MetricKeys.PIPELINES_KEY;
+import static org.logstash.instrument.metrics.MetricKeys.PLUGINS_KEY;
+import static org.logstash.instrument.metrics.MetricKeys.STATS_KEY;
 
 @JRubyClass(name = "WrappedWriteClient")
 public final class JRubyWrappedWriteClientExt extends RubyObject implements QueueWriter {
@@ -104,13 +110,17 @@ public final class JRubyWrappedWriteClientExt extends RubyObject implements Queu
         return this;
     }
 
+    @SuppressWarnings({"unchecked", "try"})
     @JRubyMethod(name = {"push", "<<"}, required = 1)
     public IRubyObject push(final ThreadContext context,
                             final IRubyObject event) throws InterruptedException {
         final JrubyEventExtLibrary.RubyEvent rubyEvent = (JrubyEventExtLibrary.RubyEvent) event;
+        final Event javaEvent = rubyEvent.getEvent();
 
-        incrementCounters(1L);
-        return executeWithTimers(() -> writeClient.doPush(context, rubyEvent));
+        return withParentSpan("queue.write", javaEvent, () -> {
+            incrementCounters(1L);
+            return executeWithTimers(() ->  writeClient.doPush(context, rubyEvent));
+        });
     }
 
     @SuppressWarnings("unchecked")

@@ -415,6 +415,7 @@ module LogStash; class JavaPipeline < AbstractPipeline
   def inputworker(plugin)
     Util::set_thread_name("[#{pipeline_id}]<#{plugin.class.config_name}")
     ThreadContext.put("pipeline.id", pipeline_id)
+    ThreadContext.put("plugin.shortname", "#{plugin.class.config_name}-input.#{plugin.id[0...6]}")
     ThreadContext.put("plugin.id", plugin.id)
     begin
       plugin.run(wrapped_write_client(plugin.id.to_sym))
