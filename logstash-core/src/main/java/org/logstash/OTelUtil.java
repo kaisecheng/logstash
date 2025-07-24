@@ -3,12 +3,14 @@ package org.logstash;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.context.propagation.TextMapGetter;
 import io.opentelemetry.context.propagation.TextMapSetter;
+import org.apache.logging.log4j.ThreadContext;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -41,7 +43,7 @@ public class OTelUtil {
 
     public static Map<String, String> getCurrentContextAsMap() {
         Map<String, String> kv = new HashMap<>();
-        W3CTraceContextPropagator.getInstance().inject(Context.current(), kv, CONTEXT_SETTER);
+        PROPAGATOR.inject(Context.current(), kv, CONTEXT_SETTER);
         return kv;
     }
 
@@ -67,8 +69,12 @@ public class OTelUtil {
                 .filter(Map.class::isInstance)
                 .map(raw -> (Map<String, String>) raw)
                 .map(OTelUtil::extractTraceContext)
-                .map(parentContext -> tracer.spanBuilder(spanName).setParent(parentContext).startSpan())
-                .orElseGet(() -> newSpan(spanName));
+                .map(parentContext -> tracer.spanBuilder(spanName)
+                        .setParent(parentContext)
+                        .startSpan())
+                .orElseGet(() -> tracer.spanBuilder(spanName)
+                        .setSpanKind(SpanKind.PRODUCER)
+                        .startSpan());
 
         try (Scope scope = span.makeCurrent()) {
             operation.run(span);
@@ -84,7 +90,9 @@ public class OTelUtil {
                 .filter(Map.class::isInstance)
                 .map(raw -> (Map<String, String>) raw)
                 .map(OTelUtil::extractTraceContext)
-                .map(parentContext -> tracer.spanBuilder(spanName).setParent(parentContext).startSpan())
+                .map(parentContext -> tracer.spanBuilder(spanName)
+                        .setParent(parentContext)
+                        .startSpan())
                 .orElseGet(() -> newSpan(spanName));
 
         try (Scope scope = span.makeCurrent()) {
@@ -92,6 +100,16 @@ public class OTelUtil {
         } finally {
             span.end();
         }
+    }
+
+    public static String rawEventSpanName() {
+        return String.format("%s.%s", ThreadContext.get("pipeline.id"),
+                ThreadContext.get("plugin.shortname") == null ? "new.event" : ThreadContext.get("plugin.shortname"));
+    }
+
+    public static String eventSpanName() {
+        return String.format("%s.%s", ThreadContext.get("pipeline.id"),
+                ThreadContext.get("plugin.shortname") == null ? "queue.recreate.event" : ThreadContext.get("plugin.shortname"));
     }
 
     private static class MapTextMapSetter implements TextMapSetter<Map<String, String>> {

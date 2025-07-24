@@ -268,5 +268,5 @@ dependencies {
     api group: 'org.apache.httpcomponents', name: 'httpcore', version: '4.4.16'
 
     // OTel dependencies
-    implementation 'io.opentelemetry:opentelemetry-api:1.25.0'
+    implementation 'io.opentelemetry:opentelemetry-api:1.52.0'
 }

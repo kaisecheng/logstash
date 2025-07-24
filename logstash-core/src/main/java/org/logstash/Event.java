@@ -24,7 +24,6 @@ import co.elastic.logstash.api.EventFactory;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.logging.log4j.ThreadContext;
 import org.joda.time.DateTime;
 import org.jruby.RubyNil;
 import org.jruby.RubyString;
@@ -43,7 +42,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import static org.logstash.OTelUtil.eventSpanName;
 import static org.logstash.OTelUtil.getCurrentContextAsMap;
+import static org.logstash.OTelUtil.rawEventSpanName;
 import static org.logstash.OTelUtil.withParentSpan;
 import static org.logstash.OTelUtil.withSpan;
 import static org.logstash.ObjectMappers.CBOR_MAPPER;
@@ -85,9 +86,7 @@ public final class Event implements Cloneable, Queueable, co.elastic.logstash.ap
         this.cancelled = false;
         setTimestamp(Timestamp.now());
 
-        String spanName = String.format("%s.%s", ThreadContext.get("pipeline.id"),
-                ThreadContext.get("plugin.shortname") == null ? "new.event" : ThreadContext.get("plugin.shortname"));
-        withSpan(spanName, (span) -> {
+        withSpan(rawEventSpanName(), (span) -> {
             // pass trace context to Event
             this.setField(TRACE, getCurrentContextAsMap());
             span.addEvent("event.created");
@@ -142,9 +141,7 @@ public final class Event implements Cloneable, Queueable, co.elastic.logstash.ap
         }
 
         // pass trace context to Event
-        String spanName = String.format("%s.%s", ThreadContext.get("pipeline.id"),
-                ThreadContext.get("plugin.shortname") == null ? "queue.deserialize.event" : ThreadContext.get("plugin.shortname"));
-        withParentSpan(spanName, this, (span) -> {
+        withParentSpan(eventSpanName(), this, (span) -> {
             if (!this.data.containsKey(TRACE)) {
                 this.setField(TRACE, getCurrentContextAsMap());
             }

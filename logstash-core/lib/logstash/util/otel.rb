@@ -5,8 +5,7 @@ module LogStash; module Util; module OTel
   extend self
 
   # new span
-  def with_span(name, events)
-    return [] if events.nil? || (events.is_a?(Array) && events.empty?)
+  def with_span(name)
     begin
       span = Java::org.logstash.OTelUtil.newSpan(name)
       scope = span.makeCurrent

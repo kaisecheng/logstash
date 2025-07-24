@@ -100,7 +100,7 @@ class LogStash::Outputs::Base < LogStash::Plugin
   public
 
   def multi_receive_with_trace(events)
-    events_with_parent_span("#{config_name}-output.#{id[0...6]}", events) do
+    with_span("#{config_name}-output.#{id[0...6]}") do
       multi_receive(events)
     end
   end

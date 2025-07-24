@@ -171,7 +171,7 @@ class LogStash::Filters::Base < LogStash::Plugin
   public
 
   def multi_filter_with_trace(events)
-    events_with_parent_span("#{config_name}-filter.#{id[0...6]}", events) do
+    with_span("#{config_name}-filter.#{id[0...6]}") do
       multi_filter(events)
     end
   end

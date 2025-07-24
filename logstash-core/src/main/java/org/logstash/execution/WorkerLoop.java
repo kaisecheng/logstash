@@ -19,12 +19,25 @@
 
 package org.logstash.execution;
 
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanBuilder;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.ThreadContext;
+import org.logstash.Event;
+import org.logstash.OTelUtil;
 import org.logstash.config.ir.CompiledPipeline;
 
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.LongAdder;
+
+import static org.logstash.OTelUtil.tracer;
 
 /**
  * Pipeline execution worker, it's responsible to execute filters and output plugins for each {@link QueueBatch} that
@@ -107,12 +120,37 @@ public final class WorkerLoop implements Runnable {
         }
     }
 
-    @SuppressWarnings("try")
+    @SuppressWarnings({"unchecked", "try"})
     private boolean abortableCompute(QueueBatch batch, boolean flush, boolean shutdown) {
+        Context firstEventContext = batch.events().stream().findFirst()
+                .map(event -> event.getEvent().getField(Event.TRACE))
+                .filter(Map.class::isInstance)
+                .map(raw -> (Map<String, String>) raw)
+                .map(OTelUtil::extractTraceContext)
+                .orElse(Context.root());
+
+        SpanBuilder batchSpanBuilder = tracer.spanBuilder(ThreadContext.get("pipeline.id")+".workers")
+                .setSpanKind(SpanKind.CONSUMER)
+                .setParent(firstEventContext)
+                .setAttribute("batch.size", batch.filteredSize());
+
+        batch.events().stream()
+                .map(event -> event.getEvent().getField(Event.TRACE))
+                .filter(Objects::nonNull)
+                .filter(Map.class::isInstance)
+                .map(raw -> (Map<String, String>) raw)
+                .map(OTelUtil::extractTraceContext)
+                .map(context -> Span.fromContext(context).getSpanContext())
+                .filter(SpanContext::isValid)
+                .forEach(batchSpanBuilder::addLink);
+
+        Span batchSpan = batchSpanBuilder.startSpan();
+
         boolean isNackBatch = false;
-        try {
+        try (Scope scope = batchSpan.makeCurrent()) {
             execution.compute(batch, flush, shutdown);
         } catch (Exception ex) {
+            batchSpan.recordException(ex);
             if (ex instanceof AbortedBatchException) {
                 isNackBatch = true;
                 LOGGER.info("Received signal to abort processing current batch. Terminating pipeline worker {}", Thread.currentThread().getName());
@@ -120,7 +158,10 @@ public final class WorkerLoop implements Runnable {
                 // if not an abort batch, continue propagating
                 throw ex;
             }
+        } finally {
+            batchSpan.end();
         }
+
         return isNackBatch;
     }
 
