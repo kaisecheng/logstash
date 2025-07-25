@@ -104,3 +104,47 @@
 #   Default is path.data/dead_letter_queue
 #
 #   path.dead_letter_queue:
+
+# http_poller fails to show pipelineId:pluginName:pluginId because event creation is not inside inputworker but in manticore thread
+- pipeline.id: in3out2
+  config.string: |
+    input {
+      heartbeat {
+        id => "1s"
+        message => '{"hello": "halo", "ip": "82.67.74.30"}'
+        interval => 1
+      }
+      heartbeat {
+        id => "2s"
+        message => '{"hello": "halo", "ip": "82.67.74.30"}'
+        interval => 2
+      }
+      http_poller {
+        id => "5s"
+        urls => {
+          mockend => {
+            method => get
+            url => "https://jsonplaceholder.typicode.com/todos/1"
+          }
+        }
+        request_timeout => 60
+        schedule => { every => "5s"}
+      }
+    }
+    filter {
+      json {
+        source => "message"
+      }
+      ruby {
+        code => "event.set('[logstash_received_at]' , Time.now.utc());"
+      }
+    }
+    output {
+      stdout { codec => rubydebug { metadata => true } }
+      elasticsearch {
+       	hosts => [ "${ES_HOST}" ]
+       	index => "macbook-pro-%{+YYYY.MM.dd}"
+       	user => "${ES_USER}"
+       	password => "${ES_PW}"
+      }
+    }
