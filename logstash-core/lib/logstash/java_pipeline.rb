@@ -72,6 +72,7 @@ module LogStash; class JavaPipeline < AbstractPipeline
     @flushRequested = java.util.concurrent.atomic.AtomicBoolean.new(false)
     @shutdownRequested = java.util.concurrent.atomic.AtomicBoolean.new(false)
     @crash_detected = Concurrent::AtomicBoolean.new(false)
+    @crash_details = Concurrent::AtomicReference.new(nil)
     @outputs_registered = Concurrent::AtomicBoolean.new(false)
 
     # @finished_execution signals that the pipeline thread has finished its execution
@@ -244,6 +245,15 @@ module LogStash; class JavaPipeline < AbstractPipeline
     @crash_detected.true?
   end
 
+  def jruby_crashed?
+    details = @crash_details.get
+    return false if details.nil?
+
+    details[:exception] == "Java::OrgJrubyExceptions::NoMethodError" &&
+      details[:error].include?("undefined method") &&
+      details[:error].include?("for nil:NilClass")
+  end
+
   # register_plugins calls #register_plugin on the plugins list and upon exception will call Plugin#do_close on all registered plugins
   # @param plugins [Array[Plugin]] the list of plugins to register
   def register_plugins(plugins)
@@ -316,10 +326,12 @@ module LogStash; class JavaPipeline < AbstractPipeline
           rescue => e
             # WorkerLoop.run() catches all Java Exception class and re-throws as IllegalStateException with the
             # original exception as the cause
+            err_details = exception_logging_keys(e.cause)
+            @crash_details.set(err_details)
             @crash_detected.make_true
             @logger.error(
               "Pipeline worker error, the pipeline will be stopped",
-              exception_logging_keys(e.cause)
+              err_details
             )
           end
         end

@@ -22,8 +22,11 @@ module LogStash
   # Lets take the example of dynamic source, where the pipeline config and settings are located and
   # managed outside of the machine.
   class StateResolver
+    include LogStash::Util::Loggable
+
     def initialize(metric)
       @metric = metric
+      @logger = self.class.logger
     end
 
     def resolve(pipelines_registry, pipeline_configs)
@@ -53,6 +56,16 @@ module LogStash
       pipelines_registry.non_running_pipelines.keys
         .select { |pipeline_id| !configured_pipelines.include?(pipeline_id) }
         .each { |pipeline_id| actions << LogStash::PipelineAction::Delete.new(pipeline_id)}
+
+      pipelines_registry.non_running_pipelines.keys
+        .select { |pipeline_id| configured_pipelines.include?(pipeline_id) }
+        .each do |pipeline_id|
+          pipeline = pipelines_registry.get_pipeline(pipeline_id)
+          if pipeline.jruby_crashed?
+            actions << LogStash::PipelineAction::Create.new(pipeline.pipeline_config, @metric)
+            @logger.warn("Detected crashed pipeline. Scheduling a restart.", "pipeline.id" => pipeline_id)
+          end
+        end
 
       actions.sort # See logstash/pipeline_action.rb
     end
