@@ -15,32 +15,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
-require_relative "service"
+require 'elasticsearch'
 
-# This is a registry used in Fixtures so a test can get back any service class
-# at runtime
-# All new services should register here
-class ServiceLocator
-  FILE_PATTERN = "_service.rb"
-
+class ElasticsearchTlsService < Service
   def initialize(settings)
-    @services = {}
-    available_services do |name, klass|
-      @services[name] = klass.new(settings)
-    end
+    super("elasticsearch_tls", settings)
+    # Reuse elasticsearch_setup/teardown.sh; TLS mode is activated when
+    # ES_TLS_CERT env var is set (done in spec before(:all)).
+    @setup_script    = File.expand_path("../elasticsearch_setup.sh",    __FILE__)
+    @teardown_script = File.expand_path("../elasticsearch_teardown.sh", __FILE__)
   end
 
-  def get_service(name)
-    @services.fetch(name)
-  end
-
-  def available_services
-    Dir.glob(File.join(File.dirname(__FILE__), "*#{FILE_PATTERN}")).each do |f|
-      require f
-      basename = File.basename(f).gsub(/#{FILE_PATTERN}$/, "")
-      service_name = basename.downcase
-      klass = Object.const_get("#{service_name.split('_').map(&:capitalize).join}Service")
-      yield service_name, klass
-    end
+  def get_client
+    @client ||= Elasticsearch::Client.new(
+      hosts: ["https://localhost:9200"],
+      user: "esadmin",
+      password: "esadmin123",
+      transport_options: { ssl: { ca_file: ENV["ES_TLS_CA"] } }
+    )
   end
 end
