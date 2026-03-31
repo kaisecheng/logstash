@@ -32,6 +32,7 @@ describe LogStash::PipelineAction::Stop do
   before do
     clear_data_dir
     pipeline.start
+    allow(agent).to receive(:ssl_file_tracker).and_return(nil)
   end
 
   after do

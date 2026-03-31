@@ -35,6 +35,7 @@ describe LogStash::PipelineAction::Reload do
   before do
     clear_data_dir
     pipeline.start
+    allow(agent).to receive(:ssl_file_tracker).and_return(nil)
   end
 
   after do
@@ -61,6 +62,14 @@ describe LogStash::PipelineAction::Reload do
     it "run the new pipeline code" do
       subject.execute(agent, pipelines)
       expect(pipelines.get_pipeline(pipeline_id).pipeline_config.config_hash).to eq(new_pipeline_config.config_hash)
+    end
+
+    it "deregisters old pipeline then registers new pipeline with ssl_file_tracker" do
+      tracker = double("ssl_file_tracker")
+      allow(agent).to receive(:ssl_file_tracker).and_return(tracker)
+      expect(tracker).to receive(:deregister).with(pipeline_id).ordered
+      expect(tracker).to receive(:register).ordered
+      subject.execute(agent, pipelines)
     end
   end
 
@@ -97,6 +106,15 @@ describe LogStash::PipelineAction::Reload do
 
     it "cannot successfully execute the action" do
       expect(subject.execute(agent, pipelines)).not_to be_a_successful_action
+    end
+
+    it "deregisters old pipeline, registers new pipeline, then deregisters again on failed start" do
+      tracker = double("ssl_file_tracker")
+      allow(agent).to receive(:ssl_file_tracker).and_return(tracker)
+      expect(tracker).to receive(:deregister).with(pipeline_id).ordered
+      expect(tracker).to receive(:register).ordered
+      expect(tracker).to receive(:deregister).with(pipeline_id).ordered
+      subject.execute(agent, pipelines)
     end
   end
 end

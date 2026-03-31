@@ -38,6 +38,7 @@ require "logstash/state_resolver"
 require "logstash/pipelines_registry"
 require "logstash/persisted_queue_config_validator"
 require "logstash/pipeline_resource_usage_validator"
+require "logstash/ssl_file_tracker"
 require "stud/trap"
 require "uri"
 require "socket"
@@ -53,6 +54,7 @@ class LogStash::Agent
   attr_accessor :logger
 
   attr_reader :health_observer
+  attr_reader :ssl_file_tracker
 
   # initialize method for LogStash::Agent
   # @param params [Hash] potential parameters are:
@@ -121,6 +123,11 @@ class LogStash::Agent
     dispatcher.fire(:after_initialize)
 
     @running = Concurrent::AtomicBoolean.new(false)
+    if @auto_reload
+      java_import "org.logstash.common.FileWatchService"
+      @file_watch_service = FileWatchService.create
+      @ssl_file_tracker   = LogStash::SslFileTracker.new(@file_watch_service)
+    end
   end
 
   def execute
@@ -233,7 +240,11 @@ class LogStash::Agent
     @pq_config_validator.check(@pipelines_registry.running_user_defined_pipelines, results.response)
 
     converge_result = resolve_actions_and_converge_state(results.response)
+    ssl_result = converge_reload_ssl(results.response)
+    converge_result = merge_converge_results(converge_result, ssl_result) if ssl_result
+
     update_metrics(converge_result)
+
     if converge_result.success? && converge_result.total > 0
       logger.info(
           "Pipelines running",
@@ -276,6 +287,7 @@ class LogStash::Agent
 
     transition_to_stopped
     converge_result = shutdown_pipelines
+    @file_watch_service&.close
     stop_collecting_metrics
     stop_webserver
     converge_result
@@ -389,6 +401,8 @@ class LogStash::Agent
   # Beware the usage with #resolve_actions_and_converge_state
   # Calling this method in `Plugin#register` causes deadlock.
   # For example, resolve_actions_and_converge_state -> pipeline reload_action -> plugin register -> converge_state_with_resolved_actions
+  # @param pipeline_actions [Array<PipelineAction::Base>]
+  # @return [ConvergeResult]
   def converge_state_with_resolved_actions(pipeline_actions)
     @convergence_lock.synchronize do
       converge_state(pipeline_actions)
@@ -464,6 +478,41 @@ class LogStash::Agent
   def resolve_actions(pipeline_configs)
     fail("Illegal access to `LogStash::Agent#resolve_actions()` without exclusive lock at #{caller[1]}") unless @convergence_lock.owned?
     @state_resolver.resolve(@pipelines_registry, pipeline_configs)
+  end
+
+  # @param pipeline_configs [Array<Config::PipelineConfig>]
+  # @return [ConvergeResult, nil] reload result for pipelines with rotated cert files, or nil if none
+  def converge_reload_ssl(pipeline_configs)
+    return nil unless @ssl_file_tracker
+
+    @ssl_file_tracker.refresh_symlink_checksums
+    stale_ids = @ssl_file_tracker.stale_pipelines
+    return nil if stale_ids.empty?
+
+    id_configs = pipeline_configs.each_with_object({}) { |c, h| h[c.pipeline_id.to_sym] = c }
+
+    reload_actions = stale_ids.filter_map do |pipeline_id|
+      config = id_configs[pipeline_id]
+      next unless config
+      logger.info("Pipeline will be reloaded due to certificate change", "pipeline.id" => pipeline_id)
+      LogStash::PipelineAction::Reload.new(config, metric)
+    end
+
+    return nil if reload_actions.empty?
+
+    converge_state_with_resolved_actions(reload_actions)
+  end
+
+  # @param r1 [ConvergeResult]
+  # @param r2 [ConvergeResult]
+  # @return [ConvergeResult] a new result containing all actions from both
+  def merge_converge_results(r1, r2)
+    merged = LogStash::ConvergeResult.new(r1.total + r2.total)
+    [r1, r2].each do |result|
+      result.successful_actions.each { |action, action_result| merged.add(action, action_result) }
+      result.failed_actions.each    { |action, action_result| merged.add(action, action_result) }
+    end
+    merged
   end
 
   def dispatch_events(converge_results)

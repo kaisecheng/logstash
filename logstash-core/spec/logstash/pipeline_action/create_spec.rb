@@ -31,6 +31,7 @@ describe LogStash::PipelineAction::Create do
   before do
     clear_data_dir
     allow(agent).to receive(:health_observer).and_return(double("HealthObserver").as_null_object)
+    allow(agent).to receive(:ssl_file_tracker).and_return(nil)
   end
 
   subject { described_class.new(pipeline_config, metric) }
