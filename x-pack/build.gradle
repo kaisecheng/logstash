@@ -55,6 +55,9 @@ tasks.register("rubyTests", Test) {
   include '/org/logstash/xpack/test/RSpecTests.class'
 }
 
+def xpackIntegrationSpecs = project.hasProperty("xpackIntegrationSpecs") ?
+    (String) project.property("xpackIntegrationSpecs") : "qa/integration"
+
 tasks.register("rubyIntegrationTests", Test) {
   if ((JavaVersion.current().getMajorVersion() as int) >= 17) {
     jvmArgs = ['--add-opens', 'java.base/sun.nio.ch=ALL-UNNAMED', '--add-opens', 'java.base/java.io=ALL-UNNAMED']
@@ -70,6 +73,7 @@ tasks.register("rubyIntegrationTests", Test) {
   inputs.files fileTree("${rootProject.projectDir}/Gemfile.lock")
   inputs.files fileTree("${rootProject.projectDir}/logstash-core/lib")
   systemProperty 'logstash.root.dir', projectDir.parent
+  systemProperty 'org.logstash.xpack.integration.specs', xpackIntegrationSpecs
   include '/org/logstash/xpack/test/RSpecIntegrationTests.class'
 }
 
