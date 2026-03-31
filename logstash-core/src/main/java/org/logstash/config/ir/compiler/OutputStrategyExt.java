@@ -20,9 +20,6 @@
 
 package org.logstash.config.ir.compiler;
 
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.stream.Collectors;
 import org.jruby.Ruby;
 import org.jruby.RubyArray;
 import org.jruby.RubyClass;
@@ -32,14 +29,15 @@ import org.jruby.RubyObject;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.internal.runtime.methods.DynamicMethod;
-import org.jruby.runtime.Block;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.logstash.RubyUtil;
 import org.logstash.execution.ExecutionContextExt;
 import org.logstash.plugins.factory.ContextualizerExt;
 
-import static org.logstash.RubyUtil.PLUGIN_CONTEXTUALIZER_MODULE;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.stream.Collectors;
 
 public final class OutputStrategyExt {
 
@@ -120,6 +118,8 @@ public final class OutputStrategyExt {
         private transient DynamicMethod outputMethod;
 
         private RubyClass outputClass;
+
+        public abstract IRubyObject getRubyPlugin(final ThreadContext context);
 
         public AbstractOutputStrategyExt(final Ruby runtime, final RubyClass metaClass) {
             super(runtime, metaClass);
@@ -213,6 +213,11 @@ public final class OutputStrategyExt {
         }
 
         @Override
+        public IRubyObject getRubyPlugin(final ThreadContext context) {
+            return workers.isEmpty() ? context.nil : workers.eltInternal(0);
+        }
+
+        @Override
         protected IRubyObject output(final ThreadContext context, final IRubyObject events) throws InterruptedException {
             final IRubyObject worker = workerQueue.take();
             try {
@@ -263,6 +268,11 @@ public final class OutputStrategyExt {
             initOutputCallsite(outputClass);
             output.callMethod(context, "metric=", metric);
             return this;
+        }
+
+        @Override
+        public IRubyObject getRubyPlugin(final ThreadContext context) {
+            return output;
         }
 
         @Override
