@@ -844,4 +844,114 @@ describe LogStash::ConfigManagement::ElasticsearchSource do
       expect { subject.get_es_version }.to raise_error(LogStash::ConfigManagement::ElasticsearchSource::RemoteConfigError)
     end
   end
+
+  describe "SSL client memoization" do
+    before do
+      allow_any_instance_of(described_class).to receive(:setup_license_checker)
+      allow_any_instance_of(described_class).to receive(:license_check)
+      allow_any_instance_of(LogStash::Outputs::ElasticSearch).to receive(:build_client).and_return(double("es_client"))
+      allow(subject).to receive(:build_client).and_call_original
+    end
+
+    it "memoizes the client when called repeatedly" do
+      client1 = subject.send(:client)
+      client2 = subject.send(:client)
+      expect(subject).to have_received(:build_client).once
+      expect(client1).to be(client2)
+    end
+  end
+
+  describe "#setup_license_checker" do
+    let(:mock_license_reader) { double("license_reader") }
+    let(:xpack_info) { LogStash::LicenseChecker::XPackInfo.from_es_response(valid_xpack_response) }
+
+    before do
+      allow_any_instance_of(described_class).to receive(:license_reader).and_return(mock_license_reader)
+      allow_any_instance_of(described_class).to receive(:license_check)
+      allow(mock_license_reader).to receive(:refresh_ssl_stamps)
+      allow(mock_license_reader).to receive(:ssl_stale?).and_return(false)
+      allow(mock_license_reader).to receive(:fetch_cluster_info).and_return(cluster_info("8.0.0"))
+      allow(mock_license_reader).to receive(:fetch_xpack_info).and_return(xpack_info)
+    end
+
+    it 'stores @license_manager after setup_license_checker' do
+      expect(subject.instance_variable_get(:@license_manager)).to be_a(LogStash::LicenseChecker::LicenseManager)
+    end
+  end
+
+  describe '#ssl_file_tracker=' do
+    let(:tracker)         { instance_double(LogStash::SslFileTracker) }
+    let(:license_manager) { instance_double(LogStash::LicenseChecker::LicenseManager) }
+    let(:cert)            { Tempfile.new("cert.pem").tap { |f| f.write("v1"); f.flush } }
+
+    before do
+      allow_any_instance_of(described_class).to receive(:setup_license_checker)
+      allow_any_instance_of(described_class).to receive(:license_check)
+      subject.instance_variable_set(:@license_manager, license_manager)
+    end
+
+    after { cert.close! }
+
+    it 'registers :_internal_cpm paths with the tracker for its own client' do
+      allow(LogStash::SslFileTracker).to receive(:paths_from_settings).and_return([cert.path])
+      expect(tracker).to receive(:register_paths).with(:_internal_cpm, [cert.path])
+      allow(tracker).to receive(:register_paths).with(:_internal_cpm_license, anything)
+      allow(license_manager).to receive(:ssl_file_tracker=)
+      allow(license_manager).to receive(:ssl_tracking_id=)
+      subject.ssl_file_tracker = tracker
+    end
+
+    it 'registers :_internal_cpm_license paths for the LicenseReader client' do
+      allow(LogStash::SslFileTracker).to receive(:paths_from_settings).and_return([cert.path])
+      allow(tracker).to receive(:register_paths).with(:_internal_cpm, anything)
+      expect(tracker).to receive(:register_paths).with(:_internal_cpm_license, [cert.path])
+      allow(license_manager).to receive(:ssl_file_tracker=)
+      allow(license_manager).to receive(:ssl_tracking_id=)
+      subject.ssl_file_tracker = tracker
+    end
+
+    it 'forwards tracker to the license_manager' do
+      allow(LogStash::SslFileTracker).to receive(:paths_from_settings).and_return([])
+      allow(tracker).to receive(:register_paths)
+      expect(license_manager).to receive(:ssl_file_tracker=).with(tracker)
+      allow(license_manager).to receive(:ssl_tracking_id=)
+      subject.ssl_file_tracker = tracker
+    end
+
+    it 'sets :_internal_cpm_license tracking id on the license_manager' do
+      allow(LogStash::SslFileTracker).to receive(:paths_from_settings).and_return([])
+      allow(tracker).to receive(:register_paths)
+      allow(license_manager).to receive(:ssl_file_tracker=)
+      expect(license_manager).to receive(:ssl_tracking_id=).with(:_internal_cpm_license)
+      subject.ssl_file_tracker = tracker
+    end
+  end
+
+  describe '#pipeline_configs SSL change detection' do
+    let(:tracker) { instance_double(LogStash::SslFileTracker) }
+
+    before do
+      allow_any_instance_of(described_class).to receive(:setup_license_checker)
+      allow_any_instance_of(described_class).to receive(:license_check)
+      subject.instance_variable_set(:@ssl_file_tracker, tracker)
+      allow(tracker).to receive(:refresh_symlink_checksums)
+      allow(tracker).to receive(:stale?).with(:_internal_cpm) { false }
+      allow(subject).to receive(:license_check)
+      allow(subject).to receive(:get_es_version) { { major: 8, minor: 0 } }
+      fetcher = double("fetcher", fetch_config: nil, get_pipeline_ids: [])
+      allow(subject).to receive(:get_pipeline_fetcher) { fetcher }
+    end
+
+    it 'invalidates client and resets baseline when stale' do
+      allow(tracker).to receive(:stale?).with(:_internal_cpm) { true }
+      expect(subject).to receive(:invalidate_client)
+      expect(tracker).to receive(:reset_baseline).with(:_internal_cpm)
+      subject.pipeline_configs
+    end
+
+    it 'does not touch client when not stale' do
+      expect(subject).not_to receive(:invalidate_client)
+      subject.pipeline_configs
+    end
+  end
 end

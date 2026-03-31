@@ -29,6 +29,14 @@ module LogStash
         end
       end
 
+      def ssl_file_tracker=(tracker)
+        @license_reader.ssl_file_tracker = tracker
+      end
+
+      def ssl_tracking_id=(id)
+        @license_reader.ssl_tracking_id = id
+      end
+
       def current_xpack_info
         @xpack_info
       end
@@ -52,6 +60,12 @@ module LogStash
       end
 
       def fetch_license
+        @license_reader.refresh_ssl_stamps
+        if @license_reader.ssl_stale?
+          logger.info("Rebuilding license reader client due to SSL certificate change")
+          @license_reader.invalidate_client
+          @license_reader.reset_ssl_baseline
+        end
         fetch_cluster_info
         if serverless?
           update_xpack_info XPackInfo.serverless_response

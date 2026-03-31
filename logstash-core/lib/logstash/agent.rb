@@ -135,6 +135,10 @@ class LogStash::Agent
     LogStash::Util.set_thread_name("Agent thread")
     logger.debug("Starting agent")
 
+    # Inject after all after_agent hooks have run so sources added by extensions
+    # (e.g. monitoring's InternalPipelineSource) are present in the source_loader.
+    inject_ssl_file_tracker if @auto_reload
+
     transition_to_running
 
     start_webserver_if_enabled
@@ -389,6 +393,14 @@ class LogStash::Agent
     @running.make_true
   end
 
+  def inject_ssl_file_tracker
+    return unless @ssl_file_tracker
+    @source_loader.sources.each do |src|
+      next unless src.respond_to?(:ssl_file_tracker=)
+      src.ssl_file_tracker = @ssl_file_tracker
+    end
+  end
+
   # @param pipeline_configs [Array<Config::PipelineConfig>]
   # @return [ConvergeResult]
   def resolve_actions_and_converge_state(pipeline_configs)
@@ -485,7 +497,7 @@ class LogStash::Agent
   def converge_reload_ssl(pipeline_configs)
     return nil unless @ssl_file_tracker
 
-    @ssl_file_tracker.refresh_symlink_checksums
+    @ssl_file_tracker.refresh_pipeline_symlinks
     stale_ids = @ssl_file_tracker.stale_pipelines
     return nil if stale_ids.empty?
 

@@ -168,7 +168,11 @@ class TestSourceLoader
   def fetch
     @count.increment
     @responses
-end
+  end
+
+  def sources
+    []
+  end
 
   def fetch_count
     @count.value

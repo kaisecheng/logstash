@@ -214,4 +214,109 @@ describe LogStash::LicenseChecker::LicenseReader do
       expect(subject.client.client_settings[:headers]).to include(product_origin_header)
     end
   end
+
+  describe '#invalidate_client (via client)' do
+    it "causes the client to be rebuilt on next access" do
+      allow(subject).to receive(:build_client).and_call_original
+      allow_any_instance_of(LogStash::Outputs::ElasticSearch).to receive(:build_client).and_return(double("es_client", close: nil))
+      subject.client
+      subject.invalidate_client
+      subject.client
+      expect(subject).to have_received(:build_client).twice
+    end
+  end
+
+  describe '#ssl_file_tracker=' do
+    let(:tracker) { instance_double(LogStash::SslFileTracker) }
+
+    it 'stores the tracker without registering paths' do
+      expect(tracker).not_to receive(:register_paths)
+      subject.ssl_file_tracker = tracker
+      expect(subject.instance_variable_get(:@ssl_file_tracker)).to eq(tracker)
+    end
+  end
+
+  describe '#ssl_tracking_id=' do
+    it 'stores the id as a symbol' do
+      subject.ssl_tracking_id = :_internal_cpm
+      expect(subject.instance_variable_get(:@ssl_tracking_id)).to eq(:_internal_cpm)
+    end
+
+    it 'converts string to symbol' do
+      subject.ssl_tracking_id = '_internal_cpm'
+      expect(subject.instance_variable_get(:@ssl_tracking_id)).to eq(:_internal_cpm)
+    end
+
+    it 'accepts nil' do
+      subject.ssl_tracking_id = nil
+      expect(subject.instance_variable_get(:@ssl_tracking_id)).to be_nil
+    end
+  end
+
+  describe '#ssl_stale?' do
+    let(:tracker) { instance_double(LogStash::SslFileTracker) }
+
+    it 'returns false when no tracker is set' do
+      expect(subject.ssl_stale?).to be false
+    end
+
+    it 'returns false when no tracking id is set' do
+      subject.instance_variable_set(:@ssl_file_tracker, tracker)
+      expect(subject.ssl_stale?).to be false
+    end
+
+    it 'delegates to tracker.stale? with the tracking id' do
+      subject.instance_variable_set(:@ssl_file_tracker, tracker)
+      subject.ssl_tracking_id = :_internal_cpm
+      allow(tracker).to receive(:stale?).with(:_internal_cpm) { true }
+      expect(subject.ssl_stale?).to be true
+    end
+  end
+
+  describe '#refresh_ssl_stamps' do
+    let(:tracker) { instance_double(LogStash::SslFileTracker) }
+
+    it 'delegates to tracker.refresh_symlink_checksums with the tracking id' do
+      subject.instance_variable_set(:@ssl_file_tracker, tracker)
+      subject.ssl_tracking_id = :_internal_cpm
+      expect(tracker).to receive(:refresh_symlink_checksums).with(:_internal_cpm)
+      subject.refresh_ssl_stamps
+    end
+
+    it 'is a no-op when no tracking id is set' do
+      subject.instance_variable_set(:@ssl_file_tracker, tracker)
+      expect(tracker).not_to receive(:refresh_symlink_checksums)
+      subject.refresh_ssl_stamps
+    end
+
+    it 'is a no-op when no tracker is set' do
+      subject.ssl_tracking_id = :_internal_cpm
+      expect { subject.refresh_ssl_stamps }.not_to raise_error
+    end
+  end
+
+  describe '#reset_ssl_baseline' do
+    let(:tracker) { instance_double(LogStash::SslFileTracker) }
+
+    it 'delegates to tracker.reset_baseline with the tracking id' do
+      subject.instance_variable_set(:@ssl_file_tracker, tracker)
+      subject.ssl_tracking_id = :_internal_cpm
+      expect(tracker).to receive(:reset_baseline).with(:_internal_cpm)
+      subject.reset_ssl_baseline
+    end
+
+    it 'is a no-op when no tracking id is set' do
+      subject.instance_variable_set(:@ssl_file_tracker, tracker)
+      expect(tracker).not_to receive(:reset_baseline)
+      subject.reset_ssl_baseline
+    end
+  end
+
+  describe '#invalidate_client' do
+    it 'sets @client to nil' do
+      subject.instance_variable_set(:@client, double("client", close: nil))
+      subject.invalidate_client
+      expect(subject.instance_variable_get(:@client)).to be_nil
+    end
+  end
 end

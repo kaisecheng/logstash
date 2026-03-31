@@ -124,6 +124,42 @@ describe LogStash::Monitoring::InternalPipelineSource do
       end
     end
 
+    describe '#ssl_file_tracker=' do
+      let(:tracker)         { instance_double(LogStash::SslFileTracker) }
+      let(:license_manager) { instance_double(LogStash::LicenseChecker::LicenseManager) }
+      let(:cert)            { Tempfile.new("cert.pem").tap { |f| f.write("v1"); f.flush } }
+
+      before do
+        subject.instance_variable_set(:@license_manager, license_manager)
+      end
+
+      after { cert.close! }
+
+      it 'registers _internal_monitoring_license paths with the tracker' do
+        allow(LogStash::SslFileTracker).to receive(:paths_from_settings).and_return([cert.path])
+        expect(tracker).to receive(:register_paths).with(:_internal_monitoring_license, [cert.path])
+        allow(license_manager).to receive(:ssl_file_tracker=)
+        allow(license_manager).to receive(:ssl_tracking_id=)
+        subject.ssl_file_tracker = tracker
+      end
+
+      it 'forwards tracker to the license_manager' do
+        allow(LogStash::SslFileTracker).to receive(:paths_from_settings).and_return([])
+        allow(tracker).to receive(:register_paths)
+        expect(license_manager).to receive(:ssl_file_tracker=).with(tracker)
+        allow(license_manager).to receive(:ssl_tracking_id=)
+        subject.ssl_file_tracker = tracker
+      end
+
+      it 'sets tracking id on the license_manager' do
+        allow(LogStash::SslFileTracker).to receive(:paths_from_settings).and_return([])
+        allow(tracker).to receive(:register_paths)
+        allow(license_manager).to receive(:ssl_file_tracker=)
+        expect(license_manager).to receive(:ssl_tracking_id=).with(:_internal_monitoring_license)
+        subject.ssl_file_tracker = tracker
+      end
+    end
+
     describe 'with serverless' do
       let(:is_serverless) { true }
 

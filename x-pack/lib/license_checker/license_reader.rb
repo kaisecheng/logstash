@@ -4,6 +4,7 @@
 
 require 'logstash/logging/logger'
 require 'logstash/outputs/elasticsearch'
+require 'logstash/ssl_file_tracker'
 
 module LogStash
   module LicenseChecker
@@ -15,6 +16,7 @@ module LogStash
       def initialize(settings, feature, options)
         @namespace = "xpack.#{feature}"
         @settings = settings
+        @ssl_tracking_id = nil
 
         es_options = options.merge('resurrect_delay' => 30)
         @es_options = Helpers::ElasticsearchOptions::es_options_with_product_origin_header(es_options)
@@ -66,6 +68,34 @@ module LogStash
       # @api private
       def client
         @client ||= build_client
+      end
+
+      def ssl_file_tracker=(tracker)
+        @ssl_file_tracker = tracker
+      end
+
+      def ssl_tracking_id=(id)
+        @ssl_tracking_id = id&.to_sym
+      end
+
+      def ssl_stale?
+        return false unless @ssl_tracking_id
+        @ssl_file_tracker&.stale?(@ssl_tracking_id) || false
+      end
+
+      def refresh_ssl_stamps
+        return unless @ssl_tracking_id
+        @ssl_file_tracker&.refresh_symlink_checksums(@ssl_tracking_id)
+      end
+
+      def reset_ssl_baseline
+        return unless @ssl_tracking_id
+        @ssl_file_tracker&.reset_baseline(@ssl_tracking_id)
+      end
+
+      def invalidate_client
+        @client&.close rescue nil
+        @client = nil
       end
 
       private

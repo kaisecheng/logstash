@@ -4,6 +4,7 @@
 
 require "spec_helper"
 require "logstash/json"
+require "logstash/runner"
 require "license_checker/license_manager"
 require 'monitoring/monitoring'
 
@@ -22,6 +23,8 @@ class Observer
 end
 
 describe LogStash::LicenseChecker::LicenseManager do
+  ONE_DAY = (60 * 60 * 24)
+
   let(:subject) { described_class.new(license_reader, 'monitoring') }
   let(:status) { "active"}
   let(:type) { 'trial' }
@@ -87,8 +90,67 @@ describe LogStash::LicenseChecker::LicenseManager do
     end
 
   before do
+    allow(license_reader).to receive(:refresh_ssl_stamps)
+    allow(license_reader).to receive(:ssl_stale?).and_return(false)
+    allow(license_reader).to receive(:ssl_tracking_id=)
     extension.additionals_settings(system_settings)
     apply_settings(settings, system_settings)
+  end
+
+  describe '#ssl_file_tracker=' do
+    let(:tracker) { instance_double(LogStash::SslFileTracker) }
+
+    before do
+      allow(license_reader).to receive(:fetch_cluster_info).and_return({})
+      allow(license_reader).to receive(:fetch_xpack_info).and_return(nil)
+    end
+
+    it 'forwards tracker to the license reader' do
+      expect(subject.instance_variable_get(:@license_reader))
+        .to receive(:ssl_file_tracker=).with(tracker)
+      subject.ssl_file_tracker = tracker
+    end
+  end
+
+  describe '#ssl_tracking_id=' do
+    before do
+      allow(license_reader).to receive(:fetch_cluster_info).and_return({})
+      allow(license_reader).to receive(:fetch_xpack_info).and_return(nil)
+    end
+
+    it 'forwards tracking id to the license reader' do
+      expect(subject.instance_variable_get(:@license_reader))
+        .to receive(:ssl_tracking_id=).with(:_internal_cpm)
+      subject.ssl_tracking_id = :_internal_cpm
+    end
+  end
+
+  describe '#fetch_license SSL change detection' do
+    let(:reader) { subject.instance_variable_get(:@license_reader) }
+
+    before do
+      allow(license_reader).to receive(:fetch_cluster_info).and_return({})
+      allow(license_reader).to receive(:fetch_xpack_info).and_return(nil)
+      allow(reader).to receive(:refresh_ssl_stamps)
+      allow(reader).to receive(:ssl_stale?) { false }
+    end
+
+    it 'always refreshes ssl stamps before checking staleness' do
+      expect(reader).to receive(:refresh_ssl_stamps).with(no_args)
+      subject.fetch_license
+    end
+
+    it 'invalidates client and resets baseline when stale' do
+      allow(reader).to receive(:ssl_stale?) { true }
+      expect(reader).to receive(:invalidate_client)
+      expect(reader).to receive(:reset_ssl_baseline)
+      subject.fetch_license
+    end
+
+    it 'does not touch client when not stale' do
+      expect(reader).not_to receive(:invalidate_client)
+      subject.fetch_license
+    end
   end
 
   context 'observers' do

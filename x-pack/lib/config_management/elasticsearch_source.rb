@@ -8,6 +8,7 @@ require "logstash/outputs/elasticsearch"
 require "logstash/json"
 require 'helpers/elasticsearch_options'
 require 'helpers/loggable_try'
+require 'logstash/ssl_file_tracker'
 require "license_checker/licensed"
 
 module LogStash
@@ -20,6 +21,7 @@ module LogStash
 
       # exclude basic
       VALID_LICENSES = %w(trial standard gold platinum enterprise)
+
       FEATURE_INTERNAL = 'management'
       FEATURE_EXTERNAL = 'logstash'
       SUPPORTED_PIPELINE_SETTINGS = %w(
@@ -37,6 +39,7 @@ module LogStash
         super(settings)
 
         if enabled?
+          @namespace = "xpack.management"
           @es_options = es_options_from_settings('management', settings)
           setup_license_checker(FEATURE_INTERNAL)
           license_check(true)
@@ -56,9 +59,26 @@ module LogStash
         (es_version[:major] >= 8 || (es_version[:major] == 7 && es_version[:minor] >= 10)) ? SystemIndicesFetcher.new : LegacyHiddenIndicesFetcher.new
       end
 
+      def ssl_file_tracker=(tracker)
+        @ssl_file_tracker = tracker
+        paths = LogStash::SslFileTracker.paths_from_settings(@settings, @namespace)
+        tracker.register_paths(:_internal_cpm, paths)
+        tracker.register_paths(:_internal_cpm_license, paths)
+        @license_manager&.ssl_file_tracker = tracker
+        @license_manager&.ssl_tracking_id = :_internal_cpm_license
+      end
+
       def pipeline_configs
         logger.trace("Fetch remote config pipeline", :pipeline_ids => pipeline_ids)
 
+        if @ssl_file_tracker
+          @ssl_file_tracker.refresh_symlink_checksums(:_internal_cpm)
+          if @ssl_file_tracker.stale?(:_internal_cpm)
+            logger.info("Rebuilding CPM client due to SSL certificate change")
+            invalidate_client
+            @ssl_file_tracker.reset_baseline(:_internal_cpm)
+          end
+        end
         license_check(true)
         es_version = get_es_version
         fetcher = get_pipeline_fetcher(es_version)
@@ -174,13 +194,21 @@ module LogStash
       alias_method :enabled?, :match?
 
       private
+
       def pipeline_ids
         @settings.get("xpack.management.pipeline.id")
       end
 
+      def invalidate_client
+        @client&.close rescue nil
+        @client = nil
+      end
+
+      # @return [Object] memoized ES HTTP client
       def client
         @client ||= build_client
       end
+
     end
 
     module Fetcher

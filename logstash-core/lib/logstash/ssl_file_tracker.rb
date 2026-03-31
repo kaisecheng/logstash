@@ -31,6 +31,16 @@ module LogStash
       ssl_truststore_path
     ].freeze
 
+    # Settings key suffixes (relative to namespace) for Elasticsearch SSL connections.
+    # Used by non-pipeline consumers (ElasticsearchSource, LicenseReader) to discover paths.
+    SETTINGS_SSL_SUFFIXES = %w[
+      elasticsearch.ssl.certificate_authority
+      elasticsearch.ssl.truststore.path
+      elasticsearch.ssl.keystore.path
+      elasticsearch.ssl.certificate
+      elasticsearch.ssl.key
+    ].freeze
+
     # Holds all per-path watch state in one place.
     # stamp:    latest change stamp. SHA-256 string for :watch paths; mtime (Time) for :poll paths.
     # callback: the FileChangeCallback registered with FileWatchService. nil for polled paths.
@@ -42,13 +52,77 @@ module LogStash
       end
     end
 
+    # Returns SSL file paths configured under `namespace` in `settings`.
+    # @param settings [LogStash::Settings]
+    # @param namespace [String] e.g. "xpack.management"
+    # @return [Array<String>]
+    def self.paths_from_settings(settings, namespace)
+      SETTINGS_SSL_SUFFIXES.filter_map do |suffix|
+        val = settings.get_value("#{namespace}.#{suffix}") rescue nil
+        val.to_s.empty? ? nil : val.to_s
+      end
+    end
+
     def initialize(file_watch_service = nil)
       @file_watch_service = file_watch_service
       # { pipeline_id => { file_path => baseline_stamp } }, set at registration time
       @registered_stamps = {}
       # { file_path => WatchedFile(:stamp, :callback, :pipeline_ids, :mode) }, one entry per path, shared across pipelines
       @watched_files = {}
+      @pipeline_ids = Set.new
       @mutex = Mutex.new
+    end
+
+    # Registers an arbitrary id (pipeline or service) with explicit paths.
+    # Multiple registrations for the same id reset the baseline. Use this to
+    # acknowledge a detected change without deregistering.
+    # @param id [Symbol, String]
+    # @param paths [Array<String>]
+    # @return [void]
+    def register_paths(id, paths)
+      id = id.to_sym
+      stamps = paths.each_with_object({}) do |p, h|
+        h[p] = ::File.symlink?(p) ? compute_mtime(p) : compute_checksum(p)
+      end
+      new_registrations = {}
+
+      @mutex.synchronize do
+        baseline = {}
+        paths.each do |path|
+          entry = @watched_files[path]
+          if entry.nil?
+            if ::File.symlink?(path)
+              entry = WatchedFile.new(stamps[path], nil, Set.new, :poll)
+            else
+              entry = WatchedFile.new(stamps[path], nil, Set.new, :watch)
+              cb = build_callback(path)
+              entry.callback = cb
+              new_registrations[path] = cb
+            end
+            @watched_files[path] = entry
+            logger.info("Registered path", :id => id, :path => path, :type => entry.poll? ? "symlink" : "file")
+          end
+          entry.pipeline_ids.add(id)
+          baseline[path] = entry.stamp
+        end
+        @registered_stamps[id] = baseline
+      end
+
+      new_registrations.each do |path, cb|
+        @file_watch_service&.register(java.nio.file.Paths.get(path), cb)
+      end
+    end
+
+    # Returns true if any path for id has a different stamp than at registration.
+    # @param id [Symbol, String]
+    # @return [Boolean]
+    def stale?(id)
+      id = id.to_sym
+      @mutex.synchronize do
+        baseline = @registered_stamps[id]
+        return false unless baseline
+        baseline.any? { |path, stamp| @watched_files[path]&.stamp != stamp }
+      end
     end
 
     # Starts watching all SSL file paths for the pipeline. Paths already watched
@@ -63,41 +137,9 @@ module LogStash
     # @param pipeline [JavaPipeline]
     # @return [void]
     def register(pipeline)
-      pid   = pipeline.pipeline_id.to_sym
-      paths = ssl_file_paths(pipeline)
-      # Compute stamps { file_path => stamp } before taking the lock (filesystem I/O outside mutex).
-      # Symlink paths use mtime; regular files use SHA-256.
-      stamps = paths.each_with_object({}) do |p, h|
-        h[p] = ::File.symlink?(p) ? compute_mtime(p) : compute_checksum(p)
-      end
-      new_registrations = {}
-
-      @mutex.synchronize do
-        # { file_path => baseline_stamp } for this pipeline registration
-        baseline = {}
-        paths.each do |path|
-          entry = @watched_files[path]
-          if entry.nil?
-            if ::File.symlink?(path)
-              entry = WatchedFile.new(stamps[path], nil, Set.new, :poll)
-            else
-              entry = WatchedFile.new(stamps[path], nil, Set.new, :watch)
-              cb = build_callback(path)
-              entry.callback = cb
-              new_registrations[path] = cb
-            end
-            @watched_files[path] = entry
-            logger.info("Registered path", :pipeline_id => pid, :path => path, :type => entry.poll? ? "symlink" : "file")
-          end
-          entry.pipeline_ids.add(pid)
-          baseline[path] = entry.stamp
-        end
-        @registered_stamps[pid] = baseline
-      end
-
-      new_registrations.each do |path, cb|
-        @file_watch_service&.register(java.nio.file.Paths.get(path), cb)
-      end
+      pid = pipeline.pipeline_id.to_sym
+      register_paths(pid, ssl_file_paths(pipeline))
+      @mutex.synchronize { @pipeline_ids.add(pid) }
     end
 
     # Stops watching SSL file paths for the pipeline. Cancels the WatchKey only
@@ -109,6 +151,7 @@ module LogStash
       pending_deregistrations = []
 
       @mutex.synchronize do
+        @pipeline_ids.delete(pid)
         baseline = @registered_stamps.delete(pid)
         return unless baseline
 
@@ -134,17 +177,27 @@ module LogStash
     # @return [Array<Symbol>] pipeline_ids whose tracked cert files have a different stamp than at registration
     def stale_pipelines
       @mutex.synchronize do
-        @registered_stamps.each_with_object([]) do |(pid, baseline), stale|
-          stale << pid if baseline.any? { |path, baseline_stamp| @watched_files[path]&.stamp != baseline_stamp }
+        @registered_stamps.each_with_object([]) do |(id, baseline), stale|
+          next unless @pipeline_ids.include?(id)
+          stale << id if baseline.any? { |path, stamp| @watched_files[path]&.stamp != stamp }
         end
       end
     end
 
-    # Refreshes the mtime stamp for all :poll symlink paths.
-    # Must be called by Agent before stale_pipelines on each converge cycle.
+    # Refreshes the mtime stamp for :poll symlink paths.
+    # When ids is given, only paths belonging to at least one of those ids are refreshed.
+    # When ids is nil, all polled paths are refreshed.
+    # @param ids [Array, Set, nil] optional ID filter
     # @return [void]
-    def refresh_symlink_checksums
-      polled_paths = @mutex.synchronize { @watched_files.select { |_, e| e.poll? }.keys }
+    def refresh_symlink_checksums(ids = nil)
+      id_filter = ids && Set.new(Array(ids).map(&:to_sym))
+      polled_paths = @mutex.synchronize do
+        @watched_files.each_with_object([]) do |(path, e), arr|
+          next unless e.poll?
+          next if id_filter && (e.pipeline_ids & id_filter).empty?
+          arr << path
+        end
+      end
       new_stamps = polled_paths.to_h { |p| [p, compute_mtime(p)] }.compact
       @mutex.synchronize do
         new_stamps.each do |path, new_stamp|
@@ -152,6 +205,31 @@ module LogStash
           next if entry.nil? || entry.stamp == new_stamp
           logger.info("Symlink stamp changed", :path => path, :old_stamp => entry.stamp, :new_stamp => new_stamp)
           entry.stamp = new_stamp
+        end
+      end
+    end
+
+    # Refreshes symlink stamps only for pipeline-registered IDs.
+    # Use this in the Agent's converge loop to avoid polling xpack paths.
+    # @return [void]
+    def refresh_pipeline_symlinks
+      ids = @mutex.synchronize { @pipeline_ids.dup }
+      refresh_symlink_checksums(ids)
+    end
+
+    # Resets the change-detection baseline for id to the current stamp of each path.
+    # Use after detecting and handling a cert change to prevent the same change
+    # from triggering again on the next converge cycle.
+    # @param id [Symbol, String]
+    # @return [void]
+    def reset_baseline(id)
+      id = id.to_sym
+      @mutex.synchronize do
+        baseline = @registered_stamps[id]
+        return unless baseline
+        baseline.each_key do |path|
+          entry = @watched_files[path]
+          baseline[path] = entry.stamp if entry
         end
       end
     end

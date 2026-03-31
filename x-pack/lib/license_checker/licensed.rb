@@ -33,12 +33,12 @@ module LogStash
       def setup_license_checker(feature, refresh_period = 30, refresh_unit = TimeUnit::SECONDS)
         @feature = feature
 
-        license_manager = LogStash::LicenseChecker::LicenseManager.new(license_reader, feature, refresh_period, refresh_unit)
-        xpack_info = license_manager.current_xpack_info
-        is_serverless = license_manager.serverless?
+        @license_manager = LogStash::LicenseChecker::LicenseManager.new(license_reader, feature, refresh_period, refresh_unit)
+        xpack_info = @license_manager.current_xpack_info
+        is_serverless = @license_manager.serverless?
         update_license_state(xpack_info, is_serverless)
 
-        license_manager.add_observer(self, :update_license_state)
+        @license_manager.add_observer(self, :update_license_state)
       end
 
       # Classes that include Licensed mixin should override this method, populating the values of state, log_level and log_message

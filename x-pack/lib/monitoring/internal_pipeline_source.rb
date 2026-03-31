@@ -5,6 +5,7 @@
 require "logstash/config/source/base"
 require 'license_checker/licensed'
 require 'helpers/elasticsearch_options'
+require 'logstash/ssl_file_tracker'
 
 module LogStash module Monitoring
   class InternalPipelineSource < LogStash::Config::Source::Base
@@ -24,6 +25,13 @@ module LogStash module Monitoring
 
     def pipeline_configs
       @pipeline_config
+    end
+
+    def ssl_file_tracker=(tracker)
+      paths = LogStash::SslFileTracker.paths_from_settings(@settings, "xpack.#{FEATURE}")
+      tracker.register_paths(:_internal_monitoring_license, paths)
+      @license_manager&.ssl_file_tracker = tracker
+      @license_manager&.ssl_tracking_id = :_internal_monitoring_license
     end
 
     def match?
