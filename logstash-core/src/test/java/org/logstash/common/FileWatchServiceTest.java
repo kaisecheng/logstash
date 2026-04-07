@@ -161,6 +161,23 @@ public class FileWatchServiceTest {
     }
 
     @Test
+    public void firesWatchLostCallbackWhenDirectoryDeleted() throws Exception {
+        File dir = tempDir.newFolder("certs");
+        File cert = new File(dir, "cert.pem");
+        Files.write(cert.toPath(), "a".getBytes());
+        CountDownLatch latch = new CountDownLatch(1);
+
+        svc.register(cert.toPath(), event -> {
+            if (event.kind() == FileWatchService.WATCH_LOST) latch.countDown();
+        });
+
+        Files.delete(cert.toPath());
+        Files.delete(dir.toPath());
+
+        assertTrue("WATCH_LOST not fired within 3s", latch.await(3, TimeUnit.SECONDS));
+    }
+
+    @Test
     public void eventContainsRegisteredPath() throws Exception {
         File cert = tempDir.newFile("cert.pem");
         Path registered = cert.toPath();

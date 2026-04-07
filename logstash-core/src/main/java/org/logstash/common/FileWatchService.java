@@ -31,6 +31,13 @@ public final class FileWatchService implements Closeable {
 
     private static final Logger logger = LogManager.getLogger(FileWatchService.class);
 
+    // Sentinel kind fired to all callbacks when their parent directory's WatchKey becomes invalid.
+    // Callers that need to react to watch loss (e.g. re-register or alert) should check for this kind.
+    public static final WatchEvent.Kind<Path> WATCH_LOST = new WatchEvent.Kind<Path>() {
+        @Override public String name() { return "WATCH_LOST"; }
+        @Override public Class<Path> type() { return Path.class; }
+    };
+
     // Callback invoked on the watcher thread when a watched file changes
     @FunctionalInterface
     public interface FileChangeCallback {
@@ -165,14 +172,11 @@ public final class FileWatchService implements Closeable {
                 fireCallbacks(absPath, event.kind());
             }
             if (!key.reset()) {
-                logger.warn("Watched directory {} is no longer accessible; TLS cert monitoring lost for files in that directory. " +
-                        "Pipelines will continue running with their currently loaded certs but will not detect further rotations.", dir);
-                // Only clean up the Java side. SslFileTracker intentionally keeps its
-                // @watched_files entries so that stale_pipelines sees no stamp change
-                // and pipelines continue running without a reload.
+                logger.warn("Watched directory {} is no longer accessible; file change detection lost for files in that directory.", dir);
                 final WatchedDir watchedDir = watchedDirs.remove(dir);
                 if (watchedDir != null) {
                     for (final Path f : watchedDir.files) {
+                        fireCallbacks(f, WATCH_LOST);
                         filepathCallbacks.remove(f);
                     }
                 }
@@ -181,9 +185,8 @@ public final class FileWatchService implements Closeable {
     }
 
     /**
-     * Dispatches change notifications to callbacks registered for {@code absPath}.
-     * WatchService events arrive at the directory level; this method filters to only
-     * the specific file that changed, ignoring other files in the same directory.
+     * Dispatches notifications to callbacks registered for {@code absPath}.
+     * {@code kind} is one of {@code ENTRY_CREATE}, {@code ENTRY_MODIFY}, or {@link #WATCH_LOST}.
      */
     private void fireCallbacks(final Path absPath, final WatchEvent.Kind<?> kind) {
         final CopyOnWriteArrayList<FileChangeCallback> callbacks = filepathCallbacks.get(absPath);
