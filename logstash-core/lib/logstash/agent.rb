@@ -497,7 +497,7 @@ class LogStash::Agent
   def converge_reload_ssl(pipeline_configs)
     return nil unless @ssl_file_tracker
 
-    @ssl_file_tracker.refresh_pipeline_symlinks
+    @ssl_file_tracker.refresh_pipeline_symlink_stamps
     stale_ids = @ssl_file_tracker.stale_pipelines
     return nil if stale_ids.empty?
 

@@ -21,9 +21,9 @@ require "set"
 module LogStash
   class SslFileTracker
     include LogStash::Util::Loggable
-    # Known SSL file-path config names that may be declared with a non-:path
-    # validate type (e.g. :array) in some plugins.
-    SSL_PATH_CONFIG_NAMES = %w[
+
+    # Known SSL file-path config names that may be declared with a non-path. Some plugins (beats) use :array as validate type
+    PLUGIN_SSL_PATH_CONFIG_NAMES = %w[
       ssl_certificate
       ssl_key
       ssl_certificate_authorities
@@ -31,8 +31,7 @@ module LogStash
       ssl_truststore_path
     ].freeze
 
-    # Settings key suffixes (relative to namespace) for Elasticsearch SSL connections.
-    # Used by non-pipeline consumers (ElasticsearchSource, LicenseReader) to discover paths.
+    # Settings key suffixes for Elasticsearch SSL connections. Used by non-pipeline consumers (LicenseReader) to discover paths
     SETTINGS_SSL_SUFFIXES = %w[
       elasticsearch.ssl.certificate_authority
       elasticsearch.ssl.truststore.path
@@ -45,7 +44,7 @@ module LogStash
     # stamp:    latest change stamp. SHA-256 string for :watch paths; mtime (Time) for :poll paths.
     # callback: the FileChangeCallback registered with FileWatchService. nil for polled paths.
     # pipeline_ids:     Set of pipeline_ids referencing this path. The Java watch is removed only when pipeline_ids is empty.
-    # mode:     :watch for regular files (FileWatchService-driven), :poll for symlinks (mtime on each converge).
+    # mode:     :watch for regular files (WatchService-driven), :poll for symlinks (mtime on each converge).
     WatchedFile = Struct.new(:stamp, :callback, :pipeline_ids, :mode) do
       def poll?
         mode == :poll
@@ -59,23 +58,21 @@ module LogStash
     def self.paths_from_settings(settings, namespace)
       SETTINGS_SSL_SUFFIXES.filter_map do |suffix|
         val = settings.get_value("#{namespace}.#{suffix}") rescue nil
-        val.to_s.empty? ? nil : val.to_s
+        val&.to_s
       end
     end
 
     def initialize(file_watch_service = nil)
       @file_watch_service = file_watch_service
-      # { pipeline_id => { file_path => baseline_stamp } }, set at registration time
+      # set at registration time, { pipeline_id => { file_path => baseline_stamp } }
       @registered_stamps = {}
-      # { file_path => WatchedFile(:stamp, :callback, :pipeline_ids, :mode) }, one entry per path, shared across pipelines
+      # one entry per path, shared across pipelines, { file_path => WatchedFile(:stamp, :callback, :pipeline_ids, :mode) }
       @watched_files = {}
       @pipeline_ids = Set.new
       @mutex = Mutex.new
     end
 
-    # Registers an arbitrary id (pipeline or service) with explicit paths.
-    # Multiple registrations for the same id reset the baseline. Use this to
-    # acknowledge a detected change without deregistering.
+    # Registers an id (pipeline or service) with explicit paths
     # @param id [Symbol, String]
     # @param paths [Array<String>]
     # @return [void]
@@ -189,12 +186,12 @@ module LogStash
     # When ids is nil, all polled paths are refreshed.
     # @param ids [Array, Set, nil] optional ID filter
     # @return [void]
-    def refresh_symlink_checksums(ids = nil)
+    def refresh_symlink_stamps(ids = nil)
       id_filter = ids && Set.new(Array(ids).map(&:to_sym))
       polled_paths = @mutex.synchronize do
-        @watched_files.each_with_object([]) do |(path, e), arr|
-          next unless e.poll?
-          next if id_filter && (e.pipeline_ids & id_filter).empty?
+        @watched_files.each_with_object([]) do |(path, entry), arr|
+          next unless entry.poll?
+          next if id_filter && (entry.pipeline_ids & id_filter).empty?
           arr << path
         end
       end
@@ -209,12 +206,11 @@ module LogStash
       end
     end
 
-    # Refreshes symlink stamps only for pipeline-registered IDs.
-    # Use this in the Agent's converge loop to avoid polling xpack paths.
+    # Refreshes symlink stamps for registered pipelines.
     # @return [void]
-    def refresh_pipeline_symlinks
+    def refresh_pipeline_symlink_stamps
       ids = @mutex.synchronize { @pipeline_ids.dup }
-      refresh_symlink_checksums(ids)
+      refresh_symlink_stamps(ids)
     end
 
     # Resets the change-detection baseline for id to the current stamp of each path.
@@ -240,6 +236,7 @@ module LogStash
     # and updates the stamp when it differs, marking the owning pipelines as stale.
     def build_callback(path)
       ->(event) {
+        return if event.kind == Java::OrgLogstashCommon::FileWatchService::WATCH_LOST
         new_checksum = compute_checksum(path)
         @mutex.synchronize do
           entry = @watched_files[path]
@@ -263,17 +260,19 @@ module LogStash
       nil
     end
 
+    # Returns unique SSL file paths declared across all plugins in the pipeline
+    # Scans each plugin’s configs where the config name matches prefix "ssl_" and is a :path type,
+    # or matches the exact name in PLUGIN_SSL_PATH_CONFIG_NAMES
     # @param pipeline [JavaPipeline]
-    # @return [Array<String>] unique SSL file paths declared across all plugins in the pipeline
+    # @return [Array<String>]
     def ssl_file_paths(pipeline)
       (pipeline.inputs + pipeline.filters + pipeline.outputs).flat_map do |plugin|
-        # Filters and outputs are wrapped in Java delegators; ruby_plugin unwraps to
-        # the actual Ruby plugin. Java-native plugins return nil — no Ruby SSL config.
         target = plugin.respond_to?(:ruby_plugin) ? plugin.ruby_plugin : plugin
         next [] if target.nil?
+
         target.class.get_config.to_a
-              .select { |name, opts| SSL_PATH_CONFIG_NAMES.include?(name.to_s) || (opts[:validate] == :path && name.to_s.start_with?("ssl_")) }
-              .flat_map { |name, _| Array(target.instance_variable_get("@#{name}")) }
+              .select { |name, opts| PLUGIN_SSL_PATH_CONFIG_NAMES.include?(name.to_s) || (opts[:validate] == :path && name.to_s.start_with?("ssl_")) }
+              .flat_map { |name, _| Array(target.instance_variable_get("@#{name}")) } # flat_map and Array() are for config that returns an array of certs
       end.uniq
     end
   end

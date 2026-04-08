@@ -934,7 +934,7 @@ describe LogStash::ConfigManagement::ElasticsearchSource do
       allow_any_instance_of(described_class).to receive(:setup_license_checker)
       allow_any_instance_of(described_class).to receive(:license_check)
       subject.instance_variable_set(:@ssl_file_tracker, tracker)
-      allow(tracker).to receive(:refresh_symlink_checksums)
+      allow(tracker).to receive(:refresh_symlink_stamps)
       allow(tracker).to receive(:stale?).with(:_internal_cpm) { false }
       allow(subject).to receive(:license_check)
       allow(subject).to receive(:get_es_version) { { major: 8, minor: 0 } }

@@ -72,7 +72,7 @@ module LogStash
         logger.trace("Fetch remote config pipeline", :pipeline_ids => pipeline_ids)
 
         if @ssl_file_tracker
-          @ssl_file_tracker.refresh_symlink_checksums(:_internal_cpm)
+          @ssl_file_tracker.refresh_symlink_stamps(:_internal_cpm)
           if @ssl_file_tracker.stale?(:_internal_cpm)
             logger.info("Rebuilding CPM client due to SSL certificate change")
             invalidate_client

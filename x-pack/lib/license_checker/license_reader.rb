@@ -85,7 +85,7 @@ module LogStash
 
       def refresh_ssl_stamps
         return unless @ssl_tracking_id
-        @ssl_file_tracker&.refresh_symlink_checksums(@ssl_tracking_id)
+        @ssl_file_tracker&.refresh_symlink_stamps(@ssl_tracking_id)
       end
 
       def reset_ssl_baseline

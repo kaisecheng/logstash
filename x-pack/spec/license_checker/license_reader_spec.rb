@@ -276,16 +276,16 @@ describe LogStash::LicenseChecker::LicenseReader do
   describe '#refresh_ssl_stamps' do
     let(:tracker) { instance_double(LogStash::SslFileTracker) }
 
-    it 'delegates to tracker.refresh_symlink_checksums with the tracking id' do
+    it 'delegates to tracker.refresh_symlink_stamps with the tracking id' do
       subject.instance_variable_set(:@ssl_file_tracker, tracker)
       subject.ssl_tracking_id = :_internal_cpm
-      expect(tracker).to receive(:refresh_symlink_checksums).with(:_internal_cpm)
+      expect(tracker).to receive(:refresh_symlink_stamps).with(:_internal_cpm)
       subject.refresh_ssl_stamps
     end
 
     it 'is a no-op when no tracking id is set' do
       subject.instance_variable_set(:@ssl_file_tracker, tracker)
-      expect(tracker).not_to receive(:refresh_symlink_checksums)
+      expect(tracker).not_to receive(:refresh_symlink_stamps)
       subject.refresh_ssl_stamps
     end
 
