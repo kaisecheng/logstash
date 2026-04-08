@@ -32,8 +32,6 @@ describe LogStash::SslFileTracker do
   let(:file_change_event) { double("event", :kind => double("kind")) }
   let(:watch_lost_event)  { double("event", :kind => Java::OrgLogstashCommon::FileWatchService::WATCH_LOST) }
 
-  # ---- helpers ----
-
   def make_plugin(ssl_configs)
     klass = Class.new do
       include LogStash::Config::Mixin
@@ -42,6 +40,12 @@ describe LogStash::SslFileTracker do
     instance = klass.new
     ssl_configs.each { |name, val| instance.instance_variable_set("@#{name}", val) }
     instance
+  end
+
+  def rotate_symlink(link, new_target)
+    tmp = "#{link}.tmp"
+    File.symlink(new_target, tmp)
+    File.rename(tmp, link)
   end
 
   def make_delegator(inner_plugin)
@@ -59,30 +63,29 @@ describe LogStash::SslFileTracker do
     )
   end
 
-  # ---- shared context ----
-
   shared_context "a watched cert file" do
-    let(:cert) { Tempfile.new("cert.pem").tap { |f| f.write("original"); f.flush } }
-    let(:plugin) { make_plugin("ssl_certificate" => cert.path) }
-    let(:pipeline) { make_pipeline(:main, inputs: [plugin]) }
+    let(:cert)        { Tempfile.new("cert.pem").tap { |f| f.write("original"); f.flush } }
+    let(:plugin)      { make_plugin("ssl_certificate" => cert.path) }
+    let(:pipeline)    { make_pipeline(:main, inputs: [plugin]) }
+    let(:captured_cb) { [] }
 
     before do
-      allow(file_watch_service).to receive(:register) { |_, cb| @captured_cb = cb }
+      allow(file_watch_service).to receive(:register) { |_, cb| captured_cb << cb }
       tracker.register(pipeline)
     end
 
     after { cert.close! }
 
     def rotate_cert
-      cert.rewind; cert.write("rotated\n"); cert.flush
+      cert.rewind
+      cert.write("rotated\n")
+      cert.flush
     end
   end
 
-  # ---- shared examples ----
-
   shared_examples "tracks delegator certs" do |plugin_slot|
     it "registers the cert path" do
-      cert      = Tempfile.new("cert.pem"); cert.write("c"); cert.flush
+      cert      = Tempfile.new("cert.pem").tap { |f| f.write("c"); f.flush }
       inner     = make_plugin("ssl_certificate" => cert.path)
       delegator = make_delegator(inner)
       pipeline  = make_pipeline(:main, plugin_slot => [delegator])
@@ -96,8 +99,6 @@ describe LogStash::SslFileTracker do
       cert.close!
     end
   end
-
-  # ---- register ----
 
   describe "#register" do
     it "registers symlink paths as :poll without FileWatchService registration" do
@@ -122,8 +123,8 @@ describe LogStash::SslFileTracker do
     it_behaves_like "tracks delegator certs", :outputs
 
     it "tracks ssl_keystore_path and ssl_truststore_path" do
-      keystore   = Tempfile.new("keystore.jks");   keystore.write("ks");   keystore.flush
-      truststore = Tempfile.new("truststore.jks"); truststore.write("ts"); truststore.flush
+      keystore   = Tempfile.new("keystore.jks").tap   { |f| f.write("ks"); f.flush }
+      truststore = Tempfile.new("truststore.jks").tap { |f| f.write("ts"); f.flush }
 
       plugin   = make_plugin("ssl_keystore_path" => keystore.path, "ssl_truststore_path" => truststore.path)
       pipeline = make_pipeline(:main, inputs: [plugin])
@@ -138,8 +139,8 @@ describe LogStash::SslFileTracker do
     end
 
     it "handles ssl_certificate_authorities as array" do
-      ca1 = Tempfile.new("ca1.pem"); ca1.write("ca1"); ca1.flush
-      ca2 = Tempfile.new("ca2.pem"); ca2.write("ca2"); ca2.flush
+      ca1 = Tempfile.new("ca1.pem").tap { |f| f.write("ca1"); f.flush }
+      ca2 = Tempfile.new("ca2.pem").tap { |f| f.write("ca2"); f.flush }
 
       klass = Class.new do
         include LogStash::Config::Mixin
@@ -157,9 +158,20 @@ describe LogStash::SslFileTracker do
     ensure
       [ca1, ca2].each(&:close!)
     end
-  end
 
-  # ---- stale_pipelines ----
+    it "calls file_watch_service.register only once when two pipelines share the same cert" do
+      cert = Tempfile.new("cert.pem").tap { |f| f.write("x"); f.flush }
+
+      register_count = 0
+      allow(file_watch_service).to receive(:register) { register_count += 1 }
+      tracker.register(make_pipeline(:p1, inputs: [make_plugin("ssl_certificate" => cert.path)]))
+      tracker.register(make_pipeline(:p2, inputs: [make_plugin("ssl_certificate" => cert.path)]))
+
+      expect(register_count).to eq(1)
+    ensure
+      cert.close!
+    end
+  end
 
   describe "#stale_pipelines" do
     it "returns empty when no pipelines registered" do
@@ -167,7 +179,7 @@ describe LogStash::SslFileTracker do
     end
 
     it "is empty immediately after register" do
-      cert = Tempfile.new("cert.pem"); cert.write("content"); cert.flush
+      cert = Tempfile.new("cert.pem").tap { |f| f.write("content"); f.flush }
       pipeline = make_pipeline(:main, inputs: [make_plugin("ssl_certificate" => cert.path)])
       tracker.register(pipeline)
       expect(tracker.stale_pipelines).to be_empty
@@ -180,23 +192,23 @@ describe LogStash::SslFileTracker do
 
       it "returns pipeline id when cert changes" do
         rotate_cert
-        @captured_cb.call(file_change_event)
+        captured_cb.first.call(file_change_event)
         expect(tracker.stale_pipelines).to eq([:main])
       end
 
       it "does not mark pipeline stale on WATCH_LOST" do
-        @captured_cb.call(watch_lost_event)
+        captured_cb.first.call(watch_lost_event)
         expect(tracker.stale_pipelines).to be_empty
       end
 
       it "does not mark pipeline stale when checksum is unchanged" do
-        @captured_cb.call(file_change_event)
+        captured_cb.first.call(file_change_event)
         expect(tracker.stale_pipelines).to be_empty
       end
 
       it "is empty after pipeline re-registers with updated checksum" do
         rotate_cert
-        @captured_cb.call(file_change_event)
+        captured_cb.first.call(file_change_event)
         tracker.deregister(:main)
         tracker.register(pipeline)
         expect(tracker.stale_pipelines).to be_empty
@@ -204,23 +216,24 @@ describe LogStash::SslFileTracker do
 
       it "removes pipeline from stale list after deregister" do
         rotate_cert
-        @captured_cb.call(file_change_event)
+        captured_cb.first.call(file_change_event)
         tracker.deregister(:main)
         expect(tracker.stale_pipelines).to be_empty
       end
     end
 
     context "with two pipelines sharing a cert" do
-      let(:cert) { Tempfile.new("cert.pem").tap { |f| f.write("v1"); f.flush } }
+      let(:cert)        { Tempfile.new("cert.pem").tap { |f| f.write("v1"); f.flush } }
+      let(:captured_cb) { [] }
 
       before do
         plugin1   = make_plugin("ssl_certificate" => cert.path)
         plugin2   = make_plugin("ssl_certificate" => cert.path)
-        allow(file_watch_service).to receive(:register) { |_, cb| @captured_cb = cb }
+        allow(file_watch_service).to receive(:register) { |_, cb| captured_cb << cb }
         tracker.register(make_pipeline(:p1, inputs: [plugin1]))
         tracker.register(make_pipeline(:p2, inputs: [plugin2]))
-        cert.rewind; cert.write("v2\n"); cert.flush
-        @captured_cb.call(file_change_event)
+        cert.tap { |f| f.rewind; f.write("v2\n"); f.flush }
+        captured_cb.first.call(file_change_event)
       end
 
       after { cert.close! }
@@ -236,7 +249,7 @@ describe LogStash::SslFileTracker do
     end
 
     it "deregisters watch when last pipeline using a cert is deregistered" do
-      cert = Tempfile.new("cert.pem"); cert.write("x"); cert.flush
+      cert = Tempfile.new("cert.pem").tap { |f| f.write("x"); f.flush }
       pipeline = make_pipeline(:main, inputs: [make_plugin("ssl_certificate" => cert.path)])
       tracker.register(pipeline)
       tracker.deregister(:main)
@@ -248,7 +261,7 @@ describe LogStash::SslFileTracker do
     end
 
     it "does not deregister watch when another pipeline still uses the same cert" do
-      cert = Tempfile.new("cert.pem"); cert.write("x"); cert.flush
+      cert = Tempfile.new("cert.pem").tap { |f| f.write("x"); f.flush }
       pipeline1 = make_pipeline(:p1, inputs: [make_plugin("ssl_certificate" => cert.path)])
       pipeline2 = make_pipeline(:p2, inputs: [make_plugin("ssl_certificate" => cert.path)])
       tracker.register(pipeline1)
@@ -260,7 +273,11 @@ describe LogStash::SslFileTracker do
     end
   end
 
-  # ---- paths_from_settings ----
+  describe "#deregister" do
+    it "is a no-op for unknown ids" do
+      expect { tracker.deregister(:nonexistent) }.not_to raise_error
+    end
+  end
 
   describe '.paths_from_settings' do
     it 'returns paths for configured SSL settings under the namespace' do
@@ -284,8 +301,6 @@ describe LogStash::SslFileTracker do
     end
   end
 
-  # ---- register_paths and stale? ----
-
   describe '#register_paths and #stale?' do
     let(:cert) { Tempfile.new("cert.pem").tap { |f| f.write("v1"); f.flush } }
     after { cert.close! }
@@ -296,11 +311,13 @@ describe LogStash::SslFileTracker do
     end
 
     context "when cert changes" do
+      let(:captured_cb) { [] }
+
       before do
-        allow(file_watch_service).to receive(:register) { |_, cb| @captured_cb = cb }
+        allow(file_watch_service).to receive(:register) { |_, cb| captured_cb << cb }
         tracker.register_paths(:_internal_cpm, [cert.path])
-        cert.rewind; cert.write("v2\n"); cert.flush
-        @captured_cb.call(file_change_event)
+        cert.tap { |f| f.rewind; f.write("v2\n"); f.flush }
+        captured_cb.first.call(file_change_event)
       end
 
       it 'returns true after a watched file changes' do
@@ -318,8 +335,6 @@ describe LogStash::SslFileTracker do
       end
     end
   end
-
-  # ---- refresh_symlink_stamps ----
 
   describe "#refresh_symlink_stamps" do
     it "detects symlink content change" do
@@ -348,9 +363,7 @@ describe LogStash::SslFileTracker do
         pipeline = make_pipeline(:main, inputs: [make_plugin("ssl_certificate" => symlink)])
         tracker.register(pipeline)
 
-        tmp_link = File.join(dir, "cert.pem.tmp")
-        File.symlink(cert2, tmp_link)
-        File.rename(tmp_link, symlink)
+        rotate_symlink(symlink, cert2)
         tracker.refresh_symlink_stamps([:main])
 
         expect(tracker.stale_pipelines).to eq([:main])
@@ -358,7 +371,7 @@ describe LogStash::SslFileTracker do
     end
 
     it "does not re-register or change stamp for :watch regular files" do
-      cert = Tempfile.new("cert.pem"); cert.write("original"); cert.flush
+      cert = Tempfile.new("cert.pem").tap { |f| f.write("original"); f.flush }
       pipeline = make_pipeline(:main, inputs: [make_plugin("ssl_certificate" => cert.path)])
       tracker.register(pipeline)
       tracker.refresh_symlink_stamps([:main])
@@ -377,13 +390,8 @@ describe LogStash::SslFileTracker do
         tracker.register_paths(:p1, [link1])
         tracker.register_paths(:p2, [link2])
 
-        new_target1 = File.join(dir, "cert1-v2.pem"); File.write(new_target1, "v2")
-        File.symlink(new_target1, File.join(dir, "cert1.pem.tmp"))
-        File.rename(File.join(dir, "cert1.pem.tmp"), link1)
-
-        new_target2 = File.join(dir, "cert2-v2.pem"); File.write(new_target2, "v2")
-        File.symlink(new_target2, File.join(dir, "cert2.pem.tmp"))
-        File.rename(File.join(dir, "cert2.pem.tmp"), link2)
+        rotate_symlink(link1, File.join(dir, "cert1-v2.pem").tap { |f| File.write(f, "v2") })
+        rotate_symlink(link2, File.join(dir, "cert2-v2.pem").tap { |f| File.write(f, "v2") })
 
         tracker.refresh_symlink_stamps([:p1])
 
@@ -402,27 +410,21 @@ describe LogStash::SslFileTracker do
         File.write(File.join(ts1, "cert.pem"), "original")
         File.write(File.join(ts2, "cert.pem"), "rotated")
 
-        data_link = File.join(vol, "..data")
-        File.symlink(ts1, data_link)
-        cert_link = File.join(vol, "cert.pem")
-        File.symlink(File.join("..data", "cert.pem"), cert_link)
+        data_link = File.join(vol, "..data"); File.symlink(ts1, data_link)
+        cert_link = File.join(vol, "cert.pem"); File.symlink(File.join("..data", "cert.pem"), cert_link)
 
         pipeline = make_pipeline(:main, inputs: [make_plugin("ssl_certificate" => cert_link)])
         tracker.register(pipeline)
 
         expect(tracker.stale_pipelines).to be_empty
 
-        new_data_link = File.join(vol, "..data.tmp")
-        File.symlink(ts2, new_data_link)
-        File.rename(new_data_link, data_link)
+        rotate_symlink(data_link, ts2)
         tracker.refresh_symlink_stamps([:main])
 
         expect(tracker.stale_pipelines).to eq([:main])
       end
     end
   end
-
-  # ---- refresh_pipeline_symlink_stamps ----
 
   describe "#refresh_pipeline_symlink_stamps" do
     it "only refreshes paths for pipeline IDs, not non-pipeline IDs" do
@@ -436,13 +438,8 @@ describe LogStash::SslFileTracker do
         tracker.register(pipeline)
         tracker.register_paths(:_internal_cpm, [link_x])
 
-        new_target_p = File.join(dir, "pipe-v2.pem"); File.write(new_target_p, "v2")
-        File.symlink(new_target_p, File.join(dir, "pipe.pem.tmp"))
-        File.rename(File.join(dir, "pipe.pem.tmp"), link_p)
-
-        new_target_x = File.join(dir, "xpack-v2.pem"); File.write(new_target_x, "v2")
-        File.symlink(new_target_x, File.join(dir, "xpack.pem.tmp"))
-        File.rename(File.join(dir, "xpack.pem.tmp"), link_x)
+        rotate_symlink(link_p, File.join(dir, "pipe-v2.pem").tap  { |f| File.write(f, "v2") })
+        rotate_symlink(link_x, File.join(dir, "xpack-v2.pem").tap { |f| File.write(f, "v2") })
 
         tracker.refresh_pipeline_symlink_stamps
 
@@ -452,16 +449,15 @@ describe LogStash::SslFileTracker do
     end
   end
 
-  # ---- reset_baseline ----
-
   describe "#reset_baseline" do
     it "clears staleness after a cert change so stale? returns false" do
-      cert = Tempfile.new("cert.pem"); cert.write("v1"); cert.flush
-      allow(file_watch_service).to receive(:register) { |_, cb| @captured_cb = cb }
+      cert        = Tempfile.new("cert.pem").tap { |f| f.write("v1"); f.flush }
+      captured_cb = []
+      allow(file_watch_service).to receive(:register) { |_, cb| captured_cb << cb }
 
       tracker.register_paths(:_internal_cpm, [cert.path])
-      cert.rewind; cert.write("v2\n"); cert.flush
-      @captured_cb.call(file_change_event)
+      cert.tap { |f| f.rewind; f.write("v2\n"); f.flush }
+      captured_cb.first.call(file_change_event)
 
       expect(tracker.stale?(:_internal_cpm)).to be true
       tracker.reset_baseline(:_internal_cpm)
