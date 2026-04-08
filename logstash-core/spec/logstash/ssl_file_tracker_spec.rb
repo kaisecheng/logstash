@@ -333,7 +333,7 @@ describe LogStash::SslFileTracker do
         expect(tracker.stale_pipelines).to be_empty
 
         File.write(target, "rotated content")
-        tracker.refresh_symlink_stamps
+        tracker.refresh_symlink_stamps([:main])
 
         expect(tracker.stale_pipelines).to eq([:main])
       end
@@ -351,7 +351,7 @@ describe LogStash::SslFileTracker do
         tmp_link = File.join(dir, "cert.pem.tmp")
         File.symlink(cert2, tmp_link)
         File.rename(tmp_link, symlink)
-        tracker.refresh_symlink_stamps
+        tracker.refresh_symlink_stamps([:main])
 
         expect(tracker.stale_pipelines).to eq([:main])
       end
@@ -361,7 +361,7 @@ describe LogStash::SslFileTracker do
       cert = Tempfile.new("cert.pem"); cert.write("original"); cert.flush
       pipeline = make_pipeline(:main, inputs: [make_plugin("ssl_certificate" => cert.path)])
       tracker.register(pipeline)
-      tracker.refresh_symlink_stamps
+      tracker.refresh_symlink_stamps([:main])
       expect(tracker.stale_pipelines).to be_empty
     ensure
       cert.close!
@@ -415,7 +415,7 @@ describe LogStash::SslFileTracker do
         new_data_link = File.join(vol, "..data.tmp")
         File.symlink(ts2, new_data_link)
         File.rename(new_data_link, data_link)
-        tracker.refresh_symlink_stamps
+        tracker.refresh_symlink_stamps([:main])
 
         expect(tracker.stale_pipelines).to eq([:main])
       end

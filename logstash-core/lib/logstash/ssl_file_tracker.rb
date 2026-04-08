@@ -51,7 +51,7 @@ module LogStash
       end
     end
 
-    # Returns SSL file paths configured under `namespace` in `settings`.
+    # Returns SSL file paths configured under xpack `namespace` in `settings`.
     # @param settings [LogStash::Settings]
     # @param namespace [String] e.g. "xpack.management"
     # @return [Array<String>]
@@ -72,7 +72,7 @@ module LogStash
       @mutex = Mutex.new
     end
 
-    # Registers an id (pipeline or service) with explicit paths
+    # Registers an id (pipeline or xpack service) with explicit paths
     # @param id [Symbol, String]
     # @param paths [Array<String>]
     # @return [void]
@@ -110,26 +110,12 @@ module LogStash
       end
     end
 
-    # Returns true if any path for id has a different stamp than at registration.
-    # @param id [Symbol, String]
-    # @return [Boolean]
-    def stale?(id)
-      id = id.to_sym
-      @mutex.synchronize do
-        baseline = @registered_stamps[id]
-        return false unless baseline
-        baseline.any? { |path, stamp| @watched_files[path]&.stamp != stamp }
-      end
-    end
-
     # Starts watching all SSL file paths for the pipeline. Paths already watched
     # by another pipeline share the same WatchedFile entry and are not re-registered.
     #
-    # Note: register() is called before pipeline startup so that any cert rotation
-    # occurring during startup is detected and triggers a reload. The remaining race
-    # window is between the baseline stamp being recorded and the cert file being
-    # read during startup. The worst case is one redundant reload: the pipeline already
-    # loaded the rotated cert, but is reloaded once more to pick up the detected change.
+    # register() is called before pipeline startup so that any cert rotation
+    # occurring during startup is detected and triggers a reload.
+    # The worst case is one redundant reload.
     #
     # @param pipeline [JavaPipeline]
     # @return [void]
@@ -145,7 +131,7 @@ module LogStash
     # @return [void]
     def deregister(pipeline_id)
       pid = pipeline_id.to_sym
-      pending_deregistrations = []
+      deregistrations = []
 
       @mutex.synchronize do
         @pipeline_ids.delete(pid)
@@ -161,17 +147,29 @@ module LogStash
 
           @watched_files.delete(path)
           logger.info("Deregistered path", :pipeline_id => pid, :path => path)
-          pending_deregistrations << [path, entry.callback] unless entry.poll?
+          deregistrations << [path, entry.callback] unless entry.poll?
         end
       end
 
-      # Java WatchService deregistration outside the mutex (I/O that should not hold the lock).
-      pending_deregistrations.each do |path, cb|
+      deregistrations.each do |path, cb|
         @file_watch_service&.deregister(java.nio.file.Paths.get(path), cb)
       end
     end
 
-    # @return [Array<Symbol>] pipeline_ids whose tracked cert files have a different stamp than at registration
+    # Returns true if any path for id has a different stamp than at registration.
+    # @param id [Symbol, String]
+    # @return [Boolean]
+    def stale?(id)
+      id = id.to_sym
+      @mutex.synchronize do
+        baseline = @registered_stamps[id]
+        return false unless baseline
+        baseline.any? { |path, stamp| @watched_files[path]&.stamp != stamp }
+      end
+    end
+
+    # Returns pipeline_ids whose tracked cert files have a different stamp than at registration
+    # @return [Array<Symbol>]
     def stale_pipelines
       @mutex.synchronize do
         @registered_stamps.each_with_object([]) do |(id, baseline), stale|
@@ -181,17 +179,15 @@ module LogStash
       end
     end
 
-    # Refreshes the mtime stamp for :poll symlink paths.
-    # When ids is given, only paths belonging to at least one of those ids are refreshed.
-    # When ids is nil, all polled paths are refreshed.
-    # @param ids [Array, Set, nil] optional ID filter
+    # Refreshes the mtime stamp for :poll symlink paths belonging to the given ids.
+    # @param ids [Array, Set]
     # @return [void]
-    def refresh_symlink_stamps(ids = nil)
-      id_filter = ids && Set.new(Array(ids).map(&:to_sym))
+    def refresh_symlink_stamps(ids)
+      id_filter = Set.new(Array(ids).map(&:to_sym))
       polled_paths = @mutex.synchronize do
         @watched_files.each_with_object([]) do |(path, entry), arr|
           next unless entry.poll?
-          next if id_filter && (entry.pipeline_ids & id_filter).empty?
+          next if (entry.pipeline_ids & id_filter).empty?
           arr << path
         end
       end
@@ -210,10 +206,11 @@ module LogStash
     # @return [void]
     def refresh_pipeline_symlink_stamps
       ids = @mutex.synchronize { @pipeline_ids.dup }
+      return if ids.empty?
       refresh_symlink_stamps(ids)
     end
 
-    # Resets the change-detection baseline for id to the current stamp of each path.
+    # Resets the baseline for id to the current stamp of each path.
     # Use after detecting and handling a cert change to prevent the same change
     # from triggering again on the next converge cycle.
     # @param id [Symbol, String]
