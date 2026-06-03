@@ -28,18 +28,24 @@ module LogStash
     PIPELINE_PLUGIN_NAME = "pipeline".freeze
 
     def initialize
+      @last_config_hash = nil
       @first_check = true
     end
 
-    # Validates pipeline-to-pipeline address topology on startup.
-    # Returns :ok when valid or when not the first check (reload).
-    # Raises BootstrapCheckError on startup when dangling outputs are detected.
+    # Validates pipeline-to-pipeline address topology.
+    # Returns :ok when valid or config unchanged, :invalid on reload errors.
+    # Raises BootstrapCheckError on startup errors.
     def check(pipeline_configs)
-      return :ok unless @first_check
+      combined_hash = compute_combined_hash(pipeline_configs)
+      if combined_hash == @last_config_hash
+        return :ok
+      end
+
+      is_startup = @first_check
       @first_check = false
 
       p2p_infos = extract_p2p_infos(pipeline_configs)
-      result = PipelineBusV2.validateP2PTopology(p2p_infos, true)
+      result = PipelineBusV2.validateP2PTopology(p2p_infos, is_startup)
 
       result.warnings.each do |warning|
         logger.warn("Pipeline '#{warning.listener_pipeline_id}' listens on address '#{warning.address}', " \
@@ -47,13 +53,27 @@ module LogStash
       end
 
       if result.has_errors
-        raise LogStash::BootstrapCheckError, format_error_message(result.errors)
+        msg = format_error_message(result.errors, is_startup)
+        if is_startup
+          raise LogStash::BootstrapCheckError, msg
+        else
+          logger.error(msg)
+          return :invalid
+        end
       end
 
+      @last_config_hash = combined_hash
       :ok
     end
 
     private
+
+    def compute_combined_hash(pipeline_configs)
+      pipeline_configs
+        .sort_by { |c| c.pipeline_id }
+        .map { |c| c.config_hash }
+        .join("|")
+    end
 
     def extract_p2p_infos(pipeline_configs)
       cve = ConfigVariableExpander.new(nil, EnvironmentVariableProvider.defaultProvider)
@@ -124,7 +144,7 @@ module LogStash
       nil
     end
 
-    def format_error_message(errors)
+    def format_error_message(errors, is_startup)
       first = errors.first
       source_info = if first.source
                       " Config source: #{first.source.id} (line #{first.source.line})."
@@ -141,8 +161,13 @@ module LogStash
         msg += " Other unresolvable addresses: #{other_addresses.join(', ')}."
       end
 
-      msg += " Fix: define a pipeline with `pipeline { address => \"#{first.address}\" }` input," \
-             " or remove the `send_to => \"#{first.address}\"` output."
+      if is_startup
+        msg += " Fix: define a pipeline with `pipeline { address => \"#{first.address}\" }` input," \
+               " or remove the `send_to => \"#{first.address}\"` output."
+      else
+        msg += " Keeping current pipeline configuration." \
+               " Fix the configuration and Logstash will retry on next reload cycle."
+      end
 
       msg
     end

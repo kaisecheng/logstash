@@ -237,7 +237,7 @@ class LogStash::Agent
     end
 
     @pq_config_validator.check(@pipelines_registry.running_user_defined_pipelines, results.response)
-    @p2p_address_validator.check(results.response)
+    return if @p2p_address_validator.check(results.response) == :invalid
 
     converge_result = resolve_actions_and_converge_state(results.response)
     ssl_result = converge_reload_ssl(results.response)

@@ -79,9 +79,18 @@ describe LogStash::P2PAddressValidator do
       validator.check([standalone_config])
     end
 
-    it "skips validation and returns :ok" do
-      expect(Java::OrgLogstashConfigIr::ConfigCompiler).not_to receive(:configToPipelineIR)
-      expect(validator.check([dangling_output_config])).to eq(:ok)
+    context "with a dangling output" do
+      it "logs an error and returns :invalid" do
+        expect(validator.logger).to receive(:error).with(/has no listener/)
+        expect(validator.check([dangling_output_config])).to eq(:invalid)
+      end
+    end
+
+    context "with an orphan input" do
+      it "does not warn and returns :ok" do
+        expect(validator.logger).not_to receive(:warn)
+        expect(validator.check([orphan_input_config])).to eq(:ok)
+      end
     end
   end
 
@@ -101,6 +110,38 @@ describe LogStash::P2PAddressValidator do
 
       expect { validator.check([upstream]) }
         .to raise_error(LogStash::BootstrapCheckError, /address 'no_listener' has no listener/)
+    end
+  end
+
+  context "caching by config hash" do
+    context "when configs have not changed since last check" do
+      it "skips validation and returns :ok without compiling IR again" do
+        validator.check([standalone_config])
+
+        expect(Java::OrgLogstashConfigIr::ConfigCompiler).not_to receive(:configToPipelineIR)
+        expect(validator.check([standalone_config])).to eq(:ok)
+      end
+    end
+
+    context "when configs change between checks" do
+      it "re-runs validation and logs error on dangling output" do
+        validator.check([standalone_config])
+
+        # Second call with a different config set — hash changes, validation runs.
+        # Since startup is already past, reload path is taken: logs error, returns :invalid.
+        expect(validator.logger).to receive(:error).with(/has no listener/)
+        expect(validator.check([dangling_output_config])).to eq(:invalid)
+      end
+    end
+
+    context "when invalid config is checked repeatedly" do
+      it "re-validates every time since the hash is not cached on failure" do
+        validator.check([standalone_config])
+
+        expect(validator.logger).to receive(:error).with(/has no listener/).twice
+        expect(validator.check([dangling_output_config])).to eq(:invalid)
+        expect(validator.check([dangling_output_config])).to eq(:invalid)
+      end
     end
   end
 end
