@@ -3,6 +3,7 @@ package org.logstash.plugins.pipeline;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.logstash.common.SourceWithMetadata;
 import org.logstash.ext.JrubyEventExtLibrary;
 
 import java.util.*;
@@ -11,7 +12,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
-class PipelineBusV2 extends AbstractPipelineBus implements PipelineBus {
+public class PipelineBusV2 extends AbstractPipelineBus implements PipelineBus {
 
     // The canonical source of truth for mapping addresses to their AddressStates
     protected final AddressStateMapping addressStates = new AddressStateMapping();
@@ -126,6 +127,80 @@ class PipelineBusV2 extends AbstractPipelineBus implements PipelineBus {
     @Override
     public void setBlockOnUnlisten(final boolean blockOnUnlisten) {
         this.blockOnUnlisten = blockOnUnlisten;
+    }
+
+    public record PipelineP2PInfo(
+            String pipelineId,
+            Set<String> sendToAddresses,
+            Set<String> listenAddresses,
+            Map<String, SourceWithMetadata> addressSources
+    ) {
+        public PipelineP2PInfo {
+            sendToAddresses = Set.copyOf(sendToAddresses);
+            listenAddresses = Set.copyOf(listenAddresses);
+            addressSources = Map.copyOf(addressSources);
+        }
+    }
+
+    public record P2PError(
+            String address,
+            String senderPipelineId,
+            SourceWithMetadata source
+    ) {}
+
+    public record P2PWarning(
+            String address,
+            String listenerPipelineId,
+            SourceWithMetadata source
+    ) {}
+
+    public record P2PValidationResult(
+            List<P2PError> errors,
+            List<P2PWarning> warnings
+    ) {
+        public P2PValidationResult {
+            errors = List.copyOf(errors);
+            warnings = List.copyOf(warnings);
+        }
+
+        public boolean hasErrors() { return !errors.isEmpty(); }
+    }
+
+    public static P2PValidationResult validateP2PTopology(
+            final List<PipelineP2PInfo> proposedPipelines,
+            final boolean isStartup) {
+        Objects.requireNonNull(proposedPipelines, "proposedPipelines must not be null");
+
+        final Set<String> allListenAddresses = new HashSet<>();
+        for (PipelineP2PInfo info : proposedPipelines) {
+            allListenAddresses.addAll(info.listenAddresses());
+        }
+
+        final List<P2PError> errors = new ArrayList<>();
+        for (PipelineP2PInfo info : proposedPipelines) {
+            for (String addr : info.sendToAddresses()) {
+                if (!allListenAddresses.contains(addr)) {
+                    errors.add(new P2PError(addr, info.pipelineId(), info.addressSources().get(addr)));
+                }
+            }
+        }
+
+        final List<P2PWarning> warnings = new ArrayList<>();
+        if (isStartup) {
+            final Set<String> allSendToAddresses = new HashSet<>();
+            for (PipelineP2PInfo info : proposedPipelines) {
+                allSendToAddresses.addAll(info.sendToAddresses());
+            }
+            for (PipelineP2PInfo info : proposedPipelines) {
+                for (String addr : info.listenAddresses()) {
+                    if (!allSendToAddresses.contains(addr)) {
+                        warnings.add(new P2PWarning(addr, info.pipelineId(), info.addressSources().get(addr)));
+                    }
+                }
+            }
+        }
+
+        return new P2PValidationResult(errors, warnings);
     }
 
     protected static class AddressStateMapping {

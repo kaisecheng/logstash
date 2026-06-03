@@ -37,6 +37,7 @@ require "logstash/pipeline_action"
 require "logstash/state_resolver"
 require "logstash/pipelines_registry"
 require "logstash/persisted_queue_config_validator"
+require "logstash/p2p_address_validator"
 require "logstash/pipeline_resource_usage_validator"
 require "stud/trap"
 require "uri"
@@ -116,6 +117,7 @@ class LogStash::Agent
     initialize_geoip_database_metrics(metric)
 
     @pq_config_validator = LogStash::PersistedQueueConfigValidator.new
+    @p2p_address_validator = LogStash::P2PAddressValidator.new
     @pipeline_resource_usage_validator = LogStash::PipelineResourceUsageValidator.new(Java::java.lang.Runtime.getRuntime().maxMemory)
 
     @dispatcher = LogStash::EventDispatcher.new(self)
@@ -235,6 +237,7 @@ class LogStash::Agent
     end
 
     @pq_config_validator.check(@pipelines_registry.running_user_defined_pipelines, results.response)
+    @p2p_address_validator.check(results.response)
 
     converge_result = resolve_actions_and_converge_state(results.response)
     ssl_result = converge_reload_ssl(results.response)
